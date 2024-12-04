@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         Санкционные - Calc
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.2
 // @description  Считает кол-во цифр в блоках с номерами ТД.
 // @author       https://t.me/SawGoD
 // @match        https://sa.transit.crcp.ru/orders/active*
 // @icon         https://telegra.ph/file/99807e90eb71a7ca3ba43.jpg
-// @grant        none
+// @homepageURL    https://github.com/SawGoD/takethehelm
+// @updateURL      https://raw.githubusercontent.com/SawGoD/takethehelm/main/sopt_calc.user.js
+// @downloadURL    https://raw.githubusercontent.com/SawGoD/takethehelm/main/sopt_calc.user.js
 // ==/UserScript==
 
 (function() {
