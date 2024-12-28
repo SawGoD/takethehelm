@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Санкционные - Calc
 // @namespace    http://tampermonkey.net/
-// @version      2.9
+// @version      2.9.2
 // @description  Считает кол-во цифр в блоках с номерами ТД.
 // @author       https://t.me/SawGoD
 // @match        https://sa.transit.crcp.ru/orders/active*
@@ -16,7 +16,7 @@
     // if (window.location.href.startsWith('https://sa.transit.crcp.ru/orders/a'))
     console.log('start')
     setInterval(() => {
-        const divs = document.querySelectorAll('div[data-title="Номер ТД"]')
+        const divs = document.querySelectorAll('div[data-title="Номер таможенной декларации"], div[data-title="Номер ТД"]');
 
         divs.forEach((div) => {
             const existingParagraph = div.querySelector('p')
