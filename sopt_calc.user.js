@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Санкционные - Calc
 // @namespace    http://tampermonkey.net/
-// @version      2.9.2
+// @version      2.9.5
 // @description  Считает кол-во цифр в блоках с номерами ТД.
 // @author       https://t.me/SawGoD
 // @match        https://sa.transit.crcp.ru/orders/active*
@@ -33,6 +33,7 @@
 document.addEventListener('keydown', function (event) {
     if (event.ctrlKey && (event.key === 'o' || event.key === 'щ')) {
         // Получаем текущий timestamp в миллисекундах
+        event.preventDefault() // Отменяем действие по умолчанию
         const currentTimestamp = Date.now()
         const currentDate = new Date(currentTimestamp)
 
