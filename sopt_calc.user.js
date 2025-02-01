@@ -56,9 +56,9 @@ document.addEventListener('keydown', function (event) {
         //get current url
         const currentUrl = window.location.href
         if (currentUrl.startsWith('https://sa.transit.crcp.ru/orders/active')) {
-            window.location.href = `https://sa.transit.crcp.ru/orders/active/?active_transition_date=${previousDayTimestamp}&active_transition_date=${currentDayTimestamp}`
+            window.location.href = `https://sa.transit.crcp.ru/orders/active/?active_transition_date=${previousDayTimestamp}&active_transition_date=${currentDayTimestamp}&custom_type=sanction`
         } else if (currentUrl.startsWith('https://sa.transit.crcp.ru/orders/archive')) {
-            window.location.href = `https://sa.transit.crcp.ru/orders/archive/?active_transition_date=${previousDayTimestamp}&active_transition_date=${currentDayTimestamp}`
+            window.location.href = `https://sa.transit.crcp.ru/orders/archive/?active_transition_date=${previousDayTimestamp}&active_transition_date=${currentDayTimestamp}&custom_type=sanction`
         }
     }
 })
