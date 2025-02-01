@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Санкционные - Calc
 // @namespace    http://tampermonkey.net/
-// @version      2.9.5
+// @version      2.9.8
 // @description  Считает кол-во цифр в блоках с номерами ТД.
 // @author       https://t.me/SawGoD
 // @match        https://sa.transit.crcp.ru/orders/active*
