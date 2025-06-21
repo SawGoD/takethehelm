@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.5.2
+// @version      2.6.2
 // @description  Раскрашивает таблицу ЭНП по условиям,
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices/item/*/telemetry*
@@ -14,15 +14,19 @@
 ;(function () {
     'use strict'
 
+    let visualEnabled = true // Глобальная переменная для отслеживания состояния визуала
+
     const setColor = (el, color) => {
-        if (el) el.style.color = color
+        if (el && visualEnabled) el.style.color = color
     }
 
     const replaceWithIcon = (el, isValid) => {
         if (!el) return
-        el.innerHTML = isValid || el.innerHTML === '🟢' ? '🟢' : '🔴'
-        el.style.fontSize = '1.5em'
-        el.style.textAlign = 'center'
+        if (visualEnabled) {
+            el.innerHTML = isValid || el.innerHTML === '🟢' ? '🟢' : '🔴'
+            el.style.fontSize = '1.5em'
+            el.style.textAlign = 'center'
+        }
     }
 
     const formatDate = (date) => {
@@ -68,6 +72,104 @@
     const processTable = () => {
         const table = document.querySelector('.grid-table')
         if (!table) return
+
+        // Добавляем кнопку для включения/отключения визуала
+        if (!document.getElementById('toggle-visual-btn')) {
+            const visualBtn = document.createElement('button')
+            visualBtn.id = 'toggle-visual-btn'
+            visualBtn.textContent = 'Отключить'
+            visualBtn.style.cssText = `
+                position: fixed;
+                top: 20px;
+                left: 20px;
+                background: #dc3545;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 10px 15px;
+                cursor: pointer;
+                z-index: 1000;
+                font-size: 14px;
+            `
+
+            visualBtn.addEventListener('click', () => {
+                visualEnabled = !visualEnabled
+                visualBtn.textContent = visualEnabled ? 'Отключить' : 'Включить'
+                visualBtn.style.background = visualEnabled ? '#dc3545' : '#28a745'
+
+                // Перезапускаем обработку таблицы
+                if (!visualEnabled) {
+                    // Сбрасываем все стили
+                    table.querySelectorAll('td span, td div, td i').forEach((el) => {
+                        el.style.color = ''
+                        if (el.tagName.toLowerCase() === 'span') {
+                            if (el.innerHTML === '🟢' || el.innerHTML === '🔴') {
+                                el.innerHTML = el.innerHTML === '🟢' ? 'Валидная' : 'Невалидная'
+                                el.style.fontSize = ''
+                                el.style.textAlign = ''
+                            }
+                            // Возвращаем оригинальный текст статуса
+                            if (el.innerHTML === 'Охрана') {
+                                el.innerHTML = 'Под охраной'
+                            }
+                            // Возвращаем оригинальный текст координат
+                            if (el.parentElement && el.parentElement.matches('div[data-title="Широта"], div[data-title="Долгота"]')) {
+                                const link = el.querySelector('a')
+                                if (link) {
+                                    el.innerHTML = link.textContent
+                                }
+                            }
+                        }
+                    })
+
+                    // Сбрасываем стили таблицы
+                    table.querySelectorAll('td, th').forEach((el) => {
+                        el.style.padding = ''
+                        el.style.minWidth = ''
+                    })
+
+                    // Показываем скрытые столбцы
+                    const ths = table.querySelectorAll('thead th')
+                    const rows = table.querySelectorAll('tbody tr')
+                    ;[colIdx.acceleration, colIdx.pinOut, colIdx.temperature].forEach((idx) => {
+                        if (idx >= 0) {
+                            if (ths[idx]) ths[idx].style.display = ''
+                            rows.forEach((row) => {
+                                const tds = row.querySelectorAll('td')
+                                if (tds[idx]) tds[idx].style.display = ''
+                            })
+                        }
+                    })
+
+                    // Удаляем гиперссылки с координат
+                    table.querySelectorAll('td[data-title="Широта/Долгота"] div span').forEach((span) => {
+                        if (span.querySelector('a')) {
+                            const text = span.querySelector('a').textContent
+                            span.innerHTML = text
+                        }
+                    })
+
+                    // Удаляем карту если она открыта
+                    const mapContainer = document.getElementById('coordinates-map')
+                    if (mapContainer) mapContainer.remove()
+
+                    // Скрываем кнопку датчиков температуры
+                    const tempBtn = document.getElementById('toggle-temp-btn')
+                    if (tempBtn) tempBtn.style.display = 'none'
+                } else {
+                    // Показываем кнопку датчиков температуры
+                    const tempBtn = document.getElementById('toggle-temp-btn')
+                    if (tempBtn) tempBtn.style.display = ''
+
+                    processTable() // Применяем визуал заново
+                }
+            })
+
+            document.body.appendChild(visualBtn)
+        }
+
+        if (!visualEnabled) return // Если визуал отключен, не обрабатываем таблицу
+
         const headers = Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent.trim())
         const colIdx = {
             valid: headers.findIndex((h) => h.includes('Валидность')),
@@ -165,7 +267,9 @@
                 const el = cells[colIdx.status].querySelector('span')
                 if (el) {
                     const txt = el.textContent.trim()
-                    if (txt === 'Под охраной') el.textContent = 'Охрана'
+                    if (visualEnabled && txt === 'Под охраной') {
+                        el.innerHTML = 'Охрана'
+                    }
                     el.style.color = txt === 'Под охраной' || txt === 'Охрана' ? 'green' : txt === 'Сон' ? 'red' : ''
                 }
             }
@@ -193,7 +297,7 @@
                 const latSpan = cells[colIdx.latlon].querySelector('div[data-title="Широта"] span')
                 const lonSpan = cells[colIdx.latlon].querySelector('div[data-title="Долгота"] span')
 
-                if (latSpan && lonSpan) {
+                if (latSpan && lonSpan && visualEnabled) {
                     const lat = parseFloat(latSpan.textContent.replace(',', '.'))
                     const lon = parseFloat(lonSpan.textContent.replace(',', '.'))
 
@@ -313,7 +417,7 @@
             toggleBtn.style.cssText = `
                 position: fixed;
                 top: 20px;
-                left: 20px;
+                left: 150px;
                 background: #007bff;
                 color: white;
                 border: none;
@@ -373,6 +477,22 @@
                     if (tds[colIdx.temperature]) tds[colIdx.temperature].style.display = 'none'
                 })
             }
+        }
+
+        // Применяем стили к таблице при включенном визуале
+        if (visualEnabled) {
+            // Увеличиваем ширину столбца с координатами
+            if (colIdx.latlon >= 0) {
+                const latlonCells = table.querySelectorAll(`td:nth-child(${colIdx.latlon + 1}), th:nth-child(${colIdx.latlon + 1})`)
+                latlonCells.forEach((cell) => {
+                    cell.style.minWidth = '200px'
+                    cell.style.padding = '8px 16px'
+                })
+            }
+            // Добавляем отступы для всех ячеек
+            table.querySelectorAll('td, th').forEach((cell) => {
+                cell.style.padding = '8px 12px'
+            })
         }
     }
 
