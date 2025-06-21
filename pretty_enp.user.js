@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      0.9.2
+// @version      0.9.3
 // @description  Раздел ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -337,6 +337,22 @@
             table.querySelectorAll('td, th').forEach((cell) => {
                 cell.style.padding = '4px 12px'
             })
+
+            // Увеличиваем отступ для столбца с координатами
+            if (colIdx.latlon >= 0) {
+                const coordCells = table.querySelectorAll(`td:nth-child(${colIdx.latlon + 1}), th:nth-child(${colIdx.latlon + 1})`)
+                coordCells.forEach((cell) => {
+                    cell.style.paddingRight = '75px' // Больше отступа справа от координат
+                })
+            }
+
+            // Увеличиваем отступ для столбца с валидностью (слева)
+            if (colIdx.valid >= 0) {
+                const validCells = table.querySelectorAll(`td:nth-child(${colIdx.valid + 1}), th:nth-child(${colIdx.valid + 1})`)
+                validCells.forEach((cell) => {
+                    cell.style.paddingLeft = '20px' // Больше отступа слева от валидности
+                })
+            }
         }
     }
 
@@ -456,6 +472,8 @@
                     // Сбрасываем стили таблицы
                     table.querySelectorAll('td, th').forEach((el) => {
                         el.style.padding = ''
+                        el.style.paddingLeft = ''
+                        el.style.paddingRight = ''
                         el.style.minWidth = ''
                     })
 
