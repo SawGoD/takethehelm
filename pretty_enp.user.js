@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.6.8
+// @version      2.6.9
 // @description  Раздел ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -499,12 +499,12 @@
                 const latlonCells = table.querySelectorAll(`td:nth-child(${colIdx.latlon + 1}), th:nth-child(${colIdx.latlon + 1})`)
                 latlonCells.forEach((cell) => {
                     cell.style.minWidth = '200px'
-                    cell.style.padding = '8px 16px'
+                    cell.style.padding = '4px 16px'
                 })
             }
             // Добавляем отступы для всех ячеек
             table.querySelectorAll('td, th').forEach((cell) => {
-                cell.style.padding = '8px 12px'
+                cell.style.padding = '4px 12px'
             })
         }
     }
