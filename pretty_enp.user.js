@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.6.4
-// @description  Раскрашивает таблицу ЭНП по условиям,
+// @version      2.6.5
+// @description  Раздел ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
-// @match        http://seal-admin.newprod.sopt/devices/item/*/telemetry*
+// @match        http://seal-admin.newprod.sopt/devices*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=crcp.ru
 // @homepageURL    https://github.com/SawGoD/takethehelm
 // @updateURL      https://raw.githubusercontent.com/SawGoD/takethehelm/main/pretty_enp.user.js
