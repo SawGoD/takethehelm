@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.6.2
+// @version      2.6.4
 // @description  Раскрашивает таблицу ЭНП по условиям,
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices/item/*/telemetry*
@@ -112,13 +112,45 @@
                             if (el.innerHTML === 'Охрана') {
                                 el.innerHTML = 'Под охраной'
                             }
-                            // Возвращаем оригинальный текст координат
-                            if (el.parentElement && el.parentElement.matches('div[data-title="Широта"], div[data-title="Долгота"]')) {
-                                const link = el.querySelector('a')
-                                if (link) {
-                                    el.innerHTML = link.textContent
-                                }
-                            }
+                        }
+                    })
+
+                    // Восстанавливаем оригинальное отображение координат
+                    table.querySelectorAll('td[data-title="Широта/Долгота"]').forEach((cell) => {
+                        const latDiv = cell.querySelector('div[data-title="Широта"]')
+                        const lonDiv = cell.querySelector('div[data-title="Долгота"]')
+
+                        if (latDiv && lonDiv) {
+                            // Получаем текст из ссылок или спанов
+                            const latText = latDiv.querySelector('a')
+                                ? latDiv.querySelector('a').textContent
+                                : latDiv.querySelector('span')
+                                ? latDiv.querySelector('span').textContent
+                                : ''
+
+                            const lonText = lonDiv.querySelector('a')
+                                ? lonDiv.querySelector('a').textContent
+                                : lonDiv.querySelector('span')
+                                ? lonDiv.querySelector('span').textContent
+                                : ''
+
+                            // Создаем новые элементы вместо изменения существующих
+                            const newLatDiv = document.createElement('div')
+                            newLatDiv.setAttribute('data-title', 'Широта')
+                            const newLatSpan = document.createElement('span')
+                            newLatSpan.textContent = latText
+                            newLatDiv.appendChild(newLatSpan)
+
+                            const newLonDiv = document.createElement('div')
+                            newLonDiv.setAttribute('data-title', 'Долгота')
+                            const newLonSpan = document.createElement('span')
+                            newLonSpan.textContent = lonText
+                            newLonDiv.appendChild(newLonSpan)
+                            newLonDiv.style.display = ''
+
+                            // Заменяем старые элементы новыми
+                            latDiv.parentNode.replaceChild(newLatDiv, latDiv)
+                            lonDiv.parentNode.replaceChild(newLonDiv, lonDiv)
                         }
                     })
 
@@ -273,137 +305,88 @@
                     el.style.color = txt === 'Под охраной' || txt === 'Охрана' ? 'green' : txt === 'Сон' ? 'red' : ''
                 }
             }
-            // Координаты: широта и долгота — 6 знаков после точки (две строки в одной ячейке)
+            // Координаты: широта и долгота
             if (colIdx.latlon >= 0) {
-                // В каждой строке ищем div с data-title="Широта" и "Долгота"
-                const latDiv = cells[colIdx.latlon].querySelector('div[data-title="Широта"] span')
-                if (latDiv) {
-                    const num = parseFloat(latDiv.textContent.replace(',', '.'))
-                    if (!isNaN(num)) {
-                        const formatted = num === 0 ? '0' : num.toFixed(5)
-                        latDiv.textContent = formatted.endsWith('.00000') ? formatted.slice(0, -4) : formatted
-                    }
-                }
-                const lonDiv = cells[colIdx.latlon].querySelector('div[data-title="Долгота"] span')
-                if (lonDiv) {
-                    const num = parseFloat(lonDiv.textContent.replace(',', '.'))
-                    if (!isNaN(num)) {
-                        const formatted = num === 0 ? '0' : num.toFixed(5)
-                        lonDiv.textContent = formatted.endsWith('.00000') ? formatted.slice(0, -4) : formatted
-                    }
-                }
+                const cell = cells[colIdx.latlon]
+                const latDiv = cell.querySelector('div[data-title="Широта"]')
+                const lonDiv = cell.querySelector('div[data-title="Долгота"]')
 
-                // Создаем ссылку на Яндекс.Карты
-                const latSpan = cells[colIdx.latlon].querySelector('div[data-title="Широта"] span')
-                const lonSpan = cells[colIdx.latlon].querySelector('div[data-title="Долгота"] span')
-
-                if (latSpan && lonSpan && visualEnabled) {
-                    const lat = parseFloat(latSpan.textContent.replace(',', '.'))
-                    const lon = parseFloat(lonSpan.textContent.replace(',', '.'))
-
-                    if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
-                        const mapUrl = `https://www.google.com/maps/embed/v1/place?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&q=${lat},${lon}&zoom=15`
-
-                        // Создаем ссылку для широты
-                        const latLink = document.createElement('a')
-                        latLink.href = '#'
-                        latLink.style.textDecoration = 'underline'
-                        latLink.style.color = '#0066cc'
-                        latLink.textContent = latSpan.textContent
-
-                        // Создаем ссылку для долготы
-                        const lonLink = document.createElement('a')
-                        lonLink.href = '#'
-                        lonLink.style.textDecoration = 'underline'
-                        lonLink.style.color = '#0066cc'
-                        lonLink.textContent = lonSpan.textContent
-
-                        // Добавляем обработчики клика для открытия в модальном окне
-                        const openInModal = (e) => {
-                            e.preventDefault()
-
-                            // Проверяем, есть ли уже карта под таблицей
-                            let existingMap = document.getElementById('coordinates-map')
-                            if (existingMap) {
-                                // Если карта уже есть, обновляем iframe с новыми координатами
-                                const iframe = existingMap.querySelector('iframe')
-                                if (iframe) {
-                                    iframe.src = mapUrl
-                                }
-                                return
-                            }
-
-                            // Создаем контейнер для карты под таблицей
-                            const mapContainer = document.createElement('div')
-                            mapContainer.id = 'coordinates-map'
-                            mapContainer.style.cssText = `
-                                width: 100%;
-                                height: 400px;
-                                margin-top: 20px;
-                                border: 2px solid #ddd;
-                                border-radius: 8px;
-                                position: relative;
-                                background: white;
-                            `
-
-                            // Создаем кнопку закрытия
-                            const closeBtn = document.createElement('button')
-                            closeBtn.textContent = '✕'
-                            closeBtn.style.cssText = `
-                                position: absolute;
-                                top: 10px;
-                                right: 10px;
-                                background: #ff4444;
-                                color: white;
-                                border: none;
-                                border-radius: 50%;
-                                width: 30px;
-                                height: 30px;
-                                cursor: pointer;
-                                font-size: 16px;
-                                z-index: 10001;
-                            `
-
-                            // Создаем iframe
-                            const iframe = document.createElement('iframe')
-                            iframe.src = mapUrl
-                            iframe.style.cssText = `
-                                width: 100%;
-                                height: 100%;
-                                border: none;
-                                border-radius: 8px;
-                            `
-
-                            // Собираем контейнер карты
-                            mapContainer.appendChild(closeBtn)
-                            mapContainer.appendChild(iframe)
-
-                            // Вставляем карту после таблицы
-                            const table = document.querySelector('.grid-table')
-                            if (table) {
-                                table.parentNode.insertBefore(mapContainer, table.nextSibling)
-                            }
-
-                            // Обработчик закрытия
-                            const closeMap = () => {
-                                const mapToClose = document.getElementById('coordinates-map')
-                                if (mapToClose) {
-                                    mapToClose.remove()
-                                }
-                            }
-
-                            closeBtn.addEventListener('click', closeMap)
+                if (latDiv && lonDiv) {
+                    // Форматируем числа
+                    const formatCoordinate = (text) => {
+                        const num = parseFloat(text.replace(',', '.'))
+                        if (!isNaN(num)) {
+                            const formatted = num === 0 ? '0' : num.toFixed(5)
+                            return formatted.endsWith('.00000') ? formatted.slice(0, -4) : formatted
                         }
+                        return text
+                    }
 
-                        latLink.addEventListener('click', openInModal)
-                        lonLink.addEventListener('click', openInModal)
+                    const latText = latDiv.querySelector('span')?.textContent || ''
+                    const lonText = lonDiv.querySelector('span')?.textContent || ''
 
-                        // Заменяем содержимое
-                        latSpan.innerHTML = ''
-                        latSpan.appendChild(latLink)
+                    const latFormatted = formatCoordinate(latText)
+                    const lonFormatted = formatCoordinate(lonText)
 
-                        lonSpan.innerHTML = ''
-                        lonSpan.appendChild(lonLink)
+                    if (!visualEnabled) {
+                        // В обычном режиме просто показываем текст
+                        latDiv.innerHTML = `<span>${latFormatted}</span>`
+                        lonDiv.innerHTML = `<span>${lonFormatted}</span>`
+                        lonDiv.style.display = ''
+                    } else {
+                        const lat = parseFloat(latFormatted)
+                        const lon = parseFloat(lonFormatted)
+
+                        if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
+                            const mapUrl = `https://www.google.com/maps/embed/v1/place?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&q=${lat},${lon}&zoom=15`
+
+                            // Создаем элементы для интерактивного режима
+                            const coordSpan = document.createElement('span')
+                            coordSpan.style.color = '#0066cc'
+                            coordSpan.style.cursor = 'pointer'
+                            coordSpan.textContent = `${latFormatted}, ${lonFormatted}`
+
+                            coordSpan.addEventListener('click', (e) => {
+                                e.preventDefault()
+                                let existingMap = document.getElementById('coordinates-map')
+                                if (existingMap) {
+                                    existingMap.remove()
+                                    return
+                                }
+
+                                const mapContainer = document.createElement('div')
+                                mapContainer.id = 'coordinates-map'
+                                mapContainer.style.cssText = `
+                                    width: 100%;
+                                    height: 400px;
+                                    margin-top: 20px;
+                                    border: 2px solid #ddd;
+                                    border-radius: 8px;
+                                    position: relative;
+                                    background: white;
+                                `
+
+                                const iframe = document.createElement('iframe')
+                                iframe.src = mapUrl
+                                iframe.style.cssText = `
+                                    width: 100%;
+                                    height: 100%;
+                                    border: none;
+                                    border-radius: 8px;
+                                `
+
+                                mapContainer.appendChild(iframe)
+
+                                const table = document.querySelector('.grid-table')
+                                if (table) {
+                                    table.parentNode.insertBefore(mapContainer, table.nextSibling)
+                                }
+                            })
+
+                            latDiv.innerHTML = ''
+                            latDiv.appendChild(coordSpan)
+                            lonDiv.style.display = 'none'
+                        }
                     }
                 }
             }
