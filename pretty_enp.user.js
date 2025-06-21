@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.6.5
+// @version      2.6.8
 // @description  Раздел ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -350,7 +350,11 @@
                                 e.preventDefault()
                                 let existingMap = document.getElementById('coordinates-map')
                                 if (existingMap) {
-                                    existingMap.remove()
+                                    // Обновляем существующий iframe
+                                    const iframe = existingMap.querySelector('iframe')
+                                    if (iframe) {
+                                        iframe.src = mapUrl
+                                    }
                                     return
                                 }
 
@@ -366,6 +370,31 @@
                                     background: white;
                                 `
 
+                                const closeBtn = document.createElement('button')
+                                closeBtn.textContent = '✕'
+                                closeBtn.style.cssText = `
+                                    position: absolute;
+                                    top: 10px;
+                                    right: 10px;
+                                    background: #ff4444;
+                                    color: white;
+                                    border: none;
+                                    border-radius: 50%;
+                                    width: 30px;
+                                    height: 30px;
+                                    cursor: pointer;
+                                    font-size: 16px;
+                                    z-index: 10001;
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    padding: 0;
+                                `
+
+                                closeBtn.addEventListener('click', () => {
+                                    mapContainer.remove()
+                                })
+
                                 const iframe = document.createElement('iframe')
                                 iframe.src = mapUrl
                                 iframe.style.cssText = `
@@ -375,6 +404,7 @@
                                     border-radius: 8px;
                                 `
 
+                                mapContainer.appendChild(closeBtn)
                                 mapContainer.appendChild(iframe)
 
                                 const table = document.querySelector('.grid-table')
