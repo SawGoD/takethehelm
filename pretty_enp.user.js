@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.6.9
+// @version      0.9.2
 // @description  Раздел ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -15,6 +15,10 @@
     'use strict'
 
     let visualEnabled = true // Глобальная переменная для отслеживания состояния визуала
+    let autoRefreshEnabled = true // Автообновление включено по умолчанию
+    let autoRefreshInterval = null // Хранит ID интервала автообновления
+    let countdownInterval = null // Хранит ID интервала отсчета
+    let timeLeft = 50 // Время до обновления в секундах
 
     const setColor = (el, color) => {
         if (el && visualEnabled) el.style.color = color
@@ -69,136 +73,76 @@
         }
     }
 
+    // Функция для открытия карты
+    const openMap = (mapUrl) => {
+        let existingMap = document.getElementById('coordinates-map')
+        if (existingMap) {
+            // Обновляем существующий iframe
+            const iframe = existingMap.querySelector('iframe')
+            if (iframe) {
+                iframe.src = mapUrl
+            }
+            return
+        }
+
+        const mapContainer = document.createElement('div')
+        mapContainer.id = 'coordinates-map'
+        mapContainer.style.cssText = `
+            width: 100%;
+            height: 400px;
+            margin-top: 20px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            position: relative;
+            background: white;
+        `
+
+        const closeBtn = document.createElement('button')
+        closeBtn.textContent = '✕'
+        closeBtn.style.cssText = `
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            cursor: pointer;
+            font-size: 16px;
+            z-index: 10001;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+        `
+
+        closeBtn.addEventListener('click', () => {
+            mapContainer.remove()
+        })
+
+        const iframe = document.createElement('iframe')
+        iframe.src = mapUrl
+        iframe.style.cssText = `
+            width: 100%;
+            height: 100%;
+            border: none;
+            border-radius: 8px;
+        `
+
+        mapContainer.appendChild(closeBtn)
+        mapContainer.appendChild(iframe)
+
+        const table = document.querySelector('.grid-table')
+        if (table) {
+            table.parentNode.insertBefore(mapContainer, table.nextSibling)
+        }
+    }
+
     const processTable = () => {
         const table = document.querySelector('.grid-table')
         if (!table) return
-
-        // Добавляем кнопку для включения/отключения визуала
-        if (!document.getElementById('toggle-visual-btn')) {
-            const visualBtn = document.createElement('button')
-            visualBtn.id = 'toggle-visual-btn'
-            visualBtn.textContent = 'Отключить'
-            visualBtn.style.cssText = `
-                position: fixed;
-                top: 20px;
-                left: 20px;
-                background: #dc3545;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 10px 15px;
-                cursor: pointer;
-                z-index: 1000;
-                font-size: 14px;
-            `
-
-            visualBtn.addEventListener('click', () => {
-                visualEnabled = !visualEnabled
-                visualBtn.textContent = visualEnabled ? 'Отключить' : 'Включить'
-                visualBtn.style.background = visualEnabled ? '#dc3545' : '#28a745'
-
-                // Перезапускаем обработку таблицы
-                if (!visualEnabled) {
-                    // Сбрасываем все стили
-                    table.querySelectorAll('td span, td div, td i').forEach((el) => {
-                        el.style.color = ''
-                        if (el.tagName.toLowerCase() === 'span') {
-                            if (el.innerHTML === '🟢' || el.innerHTML === '🔴') {
-                                el.innerHTML = el.innerHTML === '🟢' ? 'Валидная' : 'Невалидная'
-                                el.style.fontSize = ''
-                                el.style.textAlign = ''
-                            }
-                            // Возвращаем оригинальный текст статуса
-                            if (el.innerHTML === 'Охрана') {
-                                el.innerHTML = 'Под охраной'
-                            }
-                        }
-                    })
-
-                    // Восстанавливаем оригинальное отображение координат
-                    table.querySelectorAll('td[data-title="Широта/Долгота"]').forEach((cell) => {
-                        const latDiv = cell.querySelector('div[data-title="Широта"]')
-                        const lonDiv = cell.querySelector('div[data-title="Долгота"]')
-
-                        if (latDiv && lonDiv) {
-                            // Получаем текст из ссылок или спанов
-                            const latText = latDiv.querySelector('a')
-                                ? latDiv.querySelector('a').textContent
-                                : latDiv.querySelector('span')
-                                ? latDiv.querySelector('span').textContent
-                                : ''
-
-                            const lonText = lonDiv.querySelector('a')
-                                ? lonDiv.querySelector('a').textContent
-                                : lonDiv.querySelector('span')
-                                ? lonDiv.querySelector('span').textContent
-                                : ''
-
-                            // Создаем новые элементы вместо изменения существующих
-                            const newLatDiv = document.createElement('div')
-                            newLatDiv.setAttribute('data-title', 'Широта')
-                            const newLatSpan = document.createElement('span')
-                            newLatSpan.textContent = latText
-                            newLatDiv.appendChild(newLatSpan)
-
-                            const newLonDiv = document.createElement('div')
-                            newLonDiv.setAttribute('data-title', 'Долгота')
-                            const newLonSpan = document.createElement('span')
-                            newLonSpan.textContent = lonText
-                            newLonDiv.appendChild(newLonSpan)
-                            newLonDiv.style.display = ''
-
-                            // Заменяем старые элементы новыми
-                            latDiv.parentNode.replaceChild(newLatDiv, latDiv)
-                            lonDiv.parentNode.replaceChild(newLonDiv, lonDiv)
-                        }
-                    })
-
-                    // Сбрасываем стили таблицы
-                    table.querySelectorAll('td, th').forEach((el) => {
-                        el.style.padding = ''
-                        el.style.minWidth = ''
-                    })
-
-                    // Показываем скрытые столбцы
-                    const ths = table.querySelectorAll('thead th')
-                    const rows = table.querySelectorAll('tbody tr')
-                    ;[colIdx.acceleration, colIdx.pinOut, colIdx.temperature].forEach((idx) => {
-                        if (idx >= 0) {
-                            if (ths[idx]) ths[idx].style.display = ''
-                            rows.forEach((row) => {
-                                const tds = row.querySelectorAll('td')
-                                if (tds[idx]) tds[idx].style.display = ''
-                            })
-                        }
-                    })
-
-                    // Удаляем гиперссылки с координат
-                    table.querySelectorAll('td[data-title="Широта/Долгота"] div span').forEach((span) => {
-                        if (span.querySelector('a')) {
-                            const text = span.querySelector('a').textContent
-                            span.innerHTML = text
-                        }
-                    })
-
-                    // Удаляем карту если она открыта
-                    const mapContainer = document.getElementById('coordinates-map')
-                    if (mapContainer) mapContainer.remove()
-
-                    // Скрываем кнопку датчиков температуры
-                    const tempBtn = document.getElementById('toggle-temp-btn')
-                    if (tempBtn) tempBtn.style.display = 'none'
-                } else {
-                    // Показываем кнопку датчиков температуры
-                    const tempBtn = document.getElementById('toggle-temp-btn')
-                    if (tempBtn) tempBtn.style.display = ''
-
-                    processTable() // Применяем визуал заново
-                }
-            })
-
-            document.body.appendChild(visualBtn)
-        }
 
         if (!visualEnabled) return // Если визуал отключен, не обрабатываем таблицу
 
@@ -305,170 +249,65 @@
                     el.style.color = txt === 'Под охраной' || txt === 'Охрана' ? 'green' : txt === 'Сон' ? 'red' : ''
                 }
             }
-            // Координаты: широта и долгота
+            // Координаты: обрабатываем объединенный столбец "Широта/Долгота"
             if (colIdx.latlon >= 0) {
-                const cell = cells[colIdx.latlon]
-                const latDiv = cell.querySelector('div[data-title="Широта"]')
-                const lonDiv = cell.querySelector('div[data-title="Долгота"]')
+                const coordCell = cells[colIdx.latlon]
+                const latDiv = coordCell.querySelector('div[data-title="Широта"]')
+                const lonDiv = coordCell.querySelector('div[data-title="Долгота"]')
 
-                if (latDiv && lonDiv) {
-                    // Форматируем числа
-                    const formatCoordinate = (text) => {
-                        const num = parseFloat(text.replace(',', '.'))
-                        if (!isNaN(num)) {
-                            const formatted = num === 0 ? '0' : num.toFixed(5)
-                            return formatted.endsWith('.00000') ? formatted.slice(0, -4) : formatted
+                if (latDiv && lonDiv && visualEnabled) {
+                    const latSpan = latDiv.querySelector('span')
+                    const lonSpan = lonDiv.querySelector('span')
+
+                    if (latSpan && lonSpan) {
+                        const latText = latSpan.textContent.trim()
+                        const lonText = lonSpan.textContent.trim()
+
+                        const lat = parseFloat(latText.replace(',', '.'))
+                        const lon = parseFloat(lonText.replace(',', '.'))
+
+                        // Обрабатываем широту
+                        if (!isNaN(lat) && lat !== 0) {
+                            const latFormatted = lat.toFixed(5)
+                            latSpan.textContent = latFormatted.endsWith('.00000') ? latFormatted.slice(0, -4) : latFormatted
+                            latSpan.style.color = '#0066cc'
+                            latSpan.style.cursor = 'pointer'
+
+                            // Убираем отступы и делаем в одну строку
+                            latDiv.style.display = 'inline'
+                            latDiv.style.marginRight = '10px'
+
+                            // Добавляем обработчик клика для широты
+                            latSpan.onclick = () => {
+                                if (!isNaN(lon) && lon !== 0) {
+                                    const mapUrl = `https://www.google.com/maps/embed/v1/place?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&q=${lat},${lon}&zoom=15`
+                                    openMap(mapUrl)
+                                }
+                            }
                         }
-                        return text
-                    }
 
-                    const latText = latDiv.querySelector('span')?.textContent || ''
-                    const lonText = lonDiv.querySelector('span')?.textContent || ''
+                        // Обрабатываем долготу
+                        if (!isNaN(lon) && lon !== 0) {
+                            const lonFormatted = lon.toFixed(5)
+                            lonSpan.textContent = lonFormatted.endsWith('.00000') ? lonFormatted.slice(0, -4) : lonFormatted
+                            lonSpan.style.color = '#0066cc'
+                            lonSpan.style.cursor = 'pointer'
 
-                    const latFormatted = formatCoordinate(latText)
-                    const lonFormatted = formatCoordinate(lonText)
+                            // Убираем отступы и делаем в одну строку
+                            lonDiv.style.display = 'inline'
 
-                    if (!visualEnabled) {
-                        // В обычном режиме просто показываем текст
-                        latDiv.innerHTML = `<span>${latFormatted}</span>`
-                        lonDiv.innerHTML = `<span>${lonFormatted}</span>`
-                        lonDiv.style.display = ''
-                    } else {
-                        const lat = parseFloat(latFormatted)
-                        const lon = parseFloat(lonFormatted)
-
-                        if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
-                            const mapUrl = `https://www.google.com/maps/embed/v1/place?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&q=${lat},${lon}&zoom=15`
-
-                            // Создаем элементы для интерактивного режима
-                            const coordSpan = document.createElement('span')
-                            coordSpan.style.color = '#0066cc'
-                            coordSpan.style.cursor = 'pointer'
-                            coordSpan.textContent = `${latFormatted}, ${lonFormatted}`
-
-                            coordSpan.addEventListener('click', (e) => {
-                                e.preventDefault()
-                                let existingMap = document.getElementById('coordinates-map')
-                                if (existingMap) {
-                                    // Обновляем существующий iframe
-                                    const iframe = existingMap.querySelector('iframe')
-                                    if (iframe) {
-                                        iframe.src = mapUrl
-                                    }
-                                    return
+                            // Добавляем обработчик клика для долготы
+                            lonSpan.onclick = () => {
+                                if (!isNaN(lat) && lat !== 0) {
+                                    const mapUrl = `https://www.google.com/maps/embed/v1/place?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&q=${lat},${lon}&zoom=15`
+                                    openMap(mapUrl)
                                 }
-
-                                const mapContainer = document.createElement('div')
-                                mapContainer.id = 'coordinates-map'
-                                mapContainer.style.cssText = `
-                                    width: 100%;
-                                    height: 400px;
-                                    margin-top: 20px;
-                                    border: 2px solid #ddd;
-                                    border-radius: 8px;
-                                    position: relative;
-                                    background: white;
-                                `
-
-                                const closeBtn = document.createElement('button')
-                                closeBtn.textContent = '✕'
-                                closeBtn.style.cssText = `
-                                    position: absolute;
-                                    top: 10px;
-                                    right: 10px;
-                                    background: #ff4444;
-                                    color: white;
-                                    border: none;
-                                    border-radius: 50%;
-                                    width: 30px;
-                                    height: 30px;
-                                    cursor: pointer;
-                                    font-size: 16px;
-                                    z-index: 10001;
-                                    display: flex;
-                                    align-items: center;
-                                    justify-content: center;
-                                    padding: 0;
-                                `
-
-                                closeBtn.addEventListener('click', () => {
-                                    mapContainer.remove()
-                                })
-
-                                const iframe = document.createElement('iframe')
-                                iframe.src = mapUrl
-                                iframe.style.cssText = `
-                                    width: 100%;
-                                    height: 100%;
-                                    border: none;
-                                    border-radius: 8px;
-                                `
-
-                                mapContainer.appendChild(closeBtn)
-                                mapContainer.appendChild(iframe)
-
-                                const table = document.querySelector('.grid-table')
-                                if (table) {
-                                    table.parentNode.insertBefore(mapContainer, table.nextSibling)
-                                }
-                            })
-
-                            latDiv.innerHTML = ''
-                            latDiv.appendChild(coordSpan)
-                            lonDiv.style.display = 'none'
+                            }
                         }
                     }
                 }
             }
         })
-
-        // Добавляем кнопку для показа/скрытия датчиков температуры
-        if (colIdx.temperature >= 0 && !document.getElementById('toggle-temp-btn')) {
-            const toggleBtn = document.createElement('button')
-            toggleBtn.id = 'toggle-temp-btn'
-            toggleBtn.textContent = 'Показать датчики температуры'
-            toggleBtn.style.cssText = `
-                position: fixed;
-                top: 20px;
-                left: 150px;
-                background: #007bff;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 10px 15px;
-                cursor: pointer;
-                z-index: 1000;
-                font-size: 14px;
-            `
-
-            toggleBtn.addEventListener('click', () => {
-                const ths = table.querySelectorAll('thead th')
-                const rows = table.querySelectorAll('tbody tr')
-                const isVisible = ths[colIdx.temperature].style.display !== 'none'
-
-                if (isVisible) {
-                    // Скрываем
-                    ths[colIdx.temperature].style.display = 'none'
-                    rows.forEach((row) => {
-                        const tds = row.querySelectorAll('td')
-                        if (tds[colIdx.temperature]) tds[colIdx.temperature].style.display = 'none'
-                    })
-                    toggleBtn.textContent = 'Показать датчики температуры'
-                    toggleBtn.dataset.tempVisible = 'false'
-                } else {
-                    // Показываем
-                    ths[colIdx.temperature].style.display = ''
-                    rows.forEach((row) => {
-                        const tds = row.querySelectorAll('td')
-                        if (tds[colIdx.temperature]) tds[colIdx.temperature].style.display = ''
-                    })
-                    toggleBtn.textContent = 'Скрыть датчики температуры'
-                    toggleBtn.dataset.tempVisible = 'true'
-                }
-            })
-
-            document.body.appendChild(toggleBtn)
-        }
 
         // Проверяем состояние кнопки и применяем его
         const toggleBtn = document.getElementById('toggle-temp-btn')
@@ -494,14 +333,6 @@
 
         // Применяем стили к таблице при включенном визуале
         if (visualEnabled) {
-            // Увеличиваем ширину столбца с координатами
-            if (colIdx.latlon >= 0) {
-                const latlonCells = table.querySelectorAll(`td:nth-child(${colIdx.latlon + 1}), th:nth-child(${colIdx.latlon + 1})`)
-                latlonCells.forEach((cell) => {
-                    cell.style.minWidth = '200px'
-                    cell.style.padding = '4px 16px'
-                })
-            }
             // Добавляем отступы для всех ячеек
             table.querySelectorAll('td, th').forEach((cell) => {
                 cell.style.padding = '4px 12px'
@@ -509,10 +340,359 @@
         }
     }
 
-    document.addEventListener('DOMContentLoaded', processTable)
-    setTimeout(processTable, 500)
-    setTimeout(makeSerialNumberClickable, 700)
+    // Функция для обновления отображения кнопки
+    const updateRefreshButton = () => {
+        const refreshBtn = document.getElementById('auto-refresh-btn')
+        if (!refreshBtn) return
+
+        if (autoRefreshEnabled) {
+            refreshBtn.innerHTML = timeLeft
+            refreshBtn.style.fontSize = '12px'
+            refreshBtn.style.fontWeight = 'bold'
+        } else {
+            refreshBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M4.06189 13C4.02104 12.6724 4 12.3387 4 12C4 7.58172 7.58172 4 12 4C14.5006 4 16.7332 5.14727 18.2002 6.94416M19.9381 11C19.979 11.3276 20 11.6613 20 12C20 16.4183 16.4183 20 12 20C9.61061 20 7.46589 18.9525 6 17.2916M9 17H6V17.2916M18.2002 4V6.94416M18.2002 6.94416V6.99993L15.2002 7M6 17.2916V20H9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`
+            refreshBtn.style.fontSize = '14px'
+            refreshBtn.style.fontWeight = 'normal'
+        }
+    }
+
+    // Функция для автообновления страницы
+    const setupAutoRefresh = () => {
+        // Очищаем существующие интервалы
+        if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval)
+            autoRefreshInterval = null
+        }
+        if (countdownInterval) {
+            clearInterval(countdownInterval)
+            countdownInterval = null
+        }
+
+        if (autoRefreshEnabled) {
+            timeLeft = 50 // Сбрасываем счетчик
+
+            // Интервал для обновления страницы
+            autoRefreshInterval = setInterval(() => {
+                window.location.reload()
+            }, 50000) // 50000 мс = 50 секунд
+
+            // Интервал для отсчета времени
+            countdownInterval = setInterval(() => {
+                timeLeft--
+                updateRefreshButton()
+
+                if (timeLeft <= 0) {
+                    timeLeft = 50 // Сбрасываем для следующего цикла
+                }
+            }, 1000) // Обновляем каждую секунду
+
+            updateRefreshButton()
+        } else {
+            updateRefreshButton()
+        }
+    }
+
+    // Функция для создания всех кнопок управления
+    const createControlButtons = () => {
+        const table = document.querySelector('.grid-table')
+        if (!table) return
+
+        // Проверяем, что body существует
+        if (!document.body) return
+
+        const headers = Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent.trim())
+        const tempColIdx = headers.findIndex((h) => h.includes('Датчики температуры'))
+
+        // Создаем кнопку переключения визуала
+        if (!document.getElementById('toggle-visual-btn')) {
+            const visualBtn = document.createElement('button')
+            visualBtn.id = 'toggle-visual-btn'
+            visualBtn.textContent = 'Отключить'
+            visualBtn.style.cssText = `
+                position: fixed;
+                top: 20px;
+                left: 20px;
+                background: #dc3545;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 10px 15px;
+                cursor: pointer;
+                z-index: 1000;
+                font-size: 14px;
+            `
+
+            visualBtn.addEventListener('click', () => {
+                visualEnabled = !visualEnabled
+                visualBtn.textContent = visualEnabled ? 'Отключить' : 'Включить'
+                visualBtn.style.background = visualEnabled ? '#dc3545' : '#28a745'
+
+                // Перезапускаем обработку таблицы
+                if (!visualEnabled) {
+                    // Сбрасываем все стили
+                    table.querySelectorAll('td span, td div, td i').forEach((el) => {
+                        el.style.color = ''
+                        if (el.tagName.toLowerCase() === 'span') {
+                            if (el.innerHTML === '🟢' || el.innerHTML === '🔴') {
+                                el.innerHTML = el.innerHTML === '🟢' ? 'Валидная' : 'Невалидная'
+                                el.style.fontSize = ''
+                                el.style.textAlign = ''
+                            }
+                            // Возвращаем оригинальный текст статуса
+                            if (el.innerHTML === 'Охрана') {
+                                el.innerHTML = 'Под охраной'
+                            }
+                        }
+                    })
+
+                    // Сбрасываем стили координат
+                    table.querySelectorAll('td span').forEach((span) => {
+                        span.style.cursor = ''
+                        span.removeEventListener('click', () => {}) // Убираем обработчики
+                    })
+
+                    // Сбрасываем стили таблицы
+                    table.querySelectorAll('td, th').forEach((el) => {
+                        el.style.padding = ''
+                        el.style.minWidth = ''
+                    })
+
+                    // Показываем скрытые столбцы
+                    const ths = table.querySelectorAll('thead th')
+                    const rows = table.querySelectorAll('tbody tr')
+                    const hideCols = [
+                        headers.findIndex((h) => h.includes('Ускорение')),
+                        headers.findIndex((h) => h.includes('Штырь извлечен')),
+                        tempColIdx,
+                    ].filter((idx) => idx >= 0)
+                    hideCols.forEach((idx) => {
+                        if (idx >= 0) {
+                            if (ths[idx]) ths[idx].style.display = ''
+                            rows.forEach((row) => {
+                                const tds = row.querySelectorAll('td')
+                                if (tds[idx]) tds[idx].style.display = ''
+                            })
+                        }
+                    })
+
+                    // Удаляем карту если она открыта
+                    const mapContainer = document.getElementById('coordinates-map')
+                    if (mapContainer) mapContainer.remove()
+
+                    // Скрываем кнопку датчиков температуры
+                    const tempBtn = document.getElementById('toggle-temp-btn')
+                    if (tempBtn) tempBtn.style.display = 'none'
+
+                    // Скрываем и отключаем кнопку автообновления
+                    const refreshBtn = document.getElementById('auto-refresh-btn')
+                    if (refreshBtn) {
+                        refreshBtn.style.display = 'none'
+                        // Отключаем автообновление
+                        if (autoRefreshEnabled) {
+                            autoRefreshEnabled = false
+                            setupAutoRefresh() // Это очистит интервалы
+                        }
+                    }
+                } else {
+                    // Показываем кнопку датчиков температуры
+                    const tempBtn = document.getElementById('toggle-temp-btn')
+                    if (tempBtn) tempBtn.style.display = ''
+
+                    // Показываем и включаем кнопку автообновления
+                    const refreshBtn = document.getElementById('auto-refresh-btn')
+                    if (refreshBtn) {
+                        refreshBtn.style.display = ''
+                        // Включаем автообновление обратно
+                        if (!autoRefreshEnabled) {
+                            autoRefreshEnabled = true
+                            refreshBtn.style.background = '#dc3545'
+                            refreshBtn.title = 'Отключить автообновление (50с)'
+                            setupAutoRefresh()
+                        }
+                    }
+
+                    processTable() // Применяем визуал заново
+                }
+            })
+
+            document.body.appendChild(visualBtn)
+        }
+
+        // Создаем кнопку автообновления
+        if (!document.getElementById('auto-refresh-btn')) {
+            const refreshBtn = document.createElement('button')
+            refreshBtn.id = 'auto-refresh-btn'
+            refreshBtn.title = autoRefreshEnabled ? 'Отключить автообновление (50с)' : 'Включить автообновление (50с)'
+            refreshBtn.style.cssText = `
+                position: fixed;
+                top: 20px;
+                left: 150px;
+                background: ${autoRefreshEnabled ? '#dc3545' : '#28a745'};
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 10px 15px;
+                cursor: pointer;
+                z-index: 1000;
+                font-size: 14px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 50px;
+            `
+
+            refreshBtn.addEventListener('click', () => {
+                autoRefreshEnabled = !autoRefreshEnabled
+                refreshBtn.style.background = autoRefreshEnabled ? '#dc3545' : '#28a745'
+                refreshBtn.title = autoRefreshEnabled ? 'Отключить автообновление (50с)' : 'Включить автообновление (50с)'
+                setupAutoRefresh()
+            })
+
+            document.body.appendChild(refreshBtn)
+
+            // Запускаем автообновление сразу, если оно включено
+            if (autoRefreshEnabled) {
+                setupAutoRefresh()
+            } else {
+                updateRefreshButton()
+            }
+        }
+
+        // Создаем кнопку датчиков температуры
+        if (tempColIdx >= 0 && !document.getElementById('toggle-temp-btn')) {
+            const toggleBtn = document.createElement('button')
+            toggleBtn.id = 'toggle-temp-btn'
+            toggleBtn.textContent = 'Показать датчики температуры'
+            toggleBtn.style.cssText = `
+                position: fixed;
+                top: 20px;
+                left: 220px;
+                background: #007bff;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 10px 15px;
+                cursor: pointer;
+                z-index: 1000;
+                font-size: 14px;
+            `
+
+            toggleBtn.addEventListener('click', () => {
+                const ths = table.querySelectorAll('thead th')
+                const rows = table.querySelectorAll('tbody tr')
+                const isVisible = ths[tempColIdx].style.display !== 'none'
+
+                if (isVisible) {
+                    // Скрываем
+                    ths[tempColIdx].style.display = 'none'
+                    rows.forEach((row) => {
+                        const tds = row.querySelectorAll('td')
+                        if (tds[tempColIdx]) tds[tempColIdx].style.display = 'none'
+                    })
+                    toggleBtn.textContent = 'Показать датчики температуры'
+                    toggleBtn.dataset.tempVisible = 'false'
+                } else {
+                    // Показываем
+                    ths[tempColIdx].style.display = ''
+                    rows.forEach((row) => {
+                        const tds = row.querySelectorAll('td')
+                        if (tds[tempColIdx]) tds[tempColIdx].style.display = ''
+                    })
+                    toggleBtn.textContent = 'Скрыть датчики температуры'
+                    toggleBtn.dataset.tempVisible = 'true'
+                }
+            })
+
+            document.body.appendChild(toggleBtn)
+        }
+    }
+
+    // Функция для надежной инициализации
+    const initializeScript = () => {
+        // Проверяем готовность страницы
+        if (!document.body || !document.querySelector('.grid-table')) {
+            return false
+        }
+
+        createControlButtons()
+        processTable()
+        makeSerialNumberClickable()
+        return true
+    }
+
+    // Множественные попытки инициализации для надежности
+    document.addEventListener('DOMContentLoaded', initializeScript)
+
+    // Дополнительные попытки с разными интервалами
+    setTimeout(() => {
+        if (!initializeScript()) {
+            setTimeout(initializeScript, 200)
+        }
+    }, 100)
+
+    setTimeout(() => {
+        if (!initializeScript()) {
+            setTimeout(initializeScript, 300)
+        }
+    }, 500)
+
+    setTimeout(initializeScript, 1000)
+    setTimeout(initializeScript, 2000)
+
+    // MutationObserver для отслеживания изменений DOM
+    const observer = new MutationObserver((mutations) => {
+        let shouldInit = false
+        mutations.forEach((mutation) => {
+            if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                // Проверяем, добавилась ли таблица или важные элементы
+                mutation.addedNodes.forEach((node) => {
+                    if (node.nodeType === 1 && (node.classList?.contains('grid-table') || node.querySelector?.('.grid-table'))) {
+                        shouldInit = true
+                    }
+                })
+            }
+        })
+
+        if (shouldInit) {
+            setTimeout(initializeScript, 100)
+        }
+    })
+
+    // Начинаем наблюдение
+    if (document.body) {
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+        })
+    } else {
+        // Если body еще нет, ждем его появления
+        const bodyObserver = new MutationObserver(() => {
+            if (document.body) {
+                bodyObserver.disconnect()
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                })
+                initializeScript()
+            }
+        })
+        bodyObserver.observe(document.documentElement, {
+            childList: true,
+        })
+    }
 
     // Возвращаем интервал вместо MutationObserver
-    const intervalId = setInterval(processTable, 200)
+    const intervalId = setInterval(() => {
+        processTable()
+        // Проверяем и пересоздаем кнопки если они пропали
+        if (
+            !document.getElementById('toggle-visual-btn') ||
+            !document.getElementById('auto-refresh-btn') ||
+            !document.getElementById('toggle-temp-btn')
+        ) {
+            createControlButtons()
+        }
+    }, 200)
 })()
