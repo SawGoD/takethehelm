@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      0.9.5
+// @version      1.0.2
 // @description  Раздел с телеметрией ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -140,6 +140,12 @@
         }
     }
 
+    // Функция для проверки, находимся ли мы на странице с телеметрией или командами
+    const isAutoRefreshPage = () => {
+        const path = window.location.pathname
+        return path.includes('/devices/item/') && (path.endsWith('/telemetry') || path.endsWith('/commands'))
+    }
+
     // Функция для парсинга даты из строки формата "05.01.2026 17:14:11"
     const parseDateTime = (dateStr) => {
         if (!dateStr) return null
@@ -149,18 +155,37 @@
         return new Date(year, month - 1, day, hour, minute, second)
     }
 
+    // Функция для парсинга даты из формата команд "07.01.2026, 15:44"
+    const parseCommandDateTime = (dateStr) => {
+        if (!dateStr || dateStr.trim() === '-') return null
+        const match = dateStr.trim().match(/(\d{2})\.(\d{2})\.(\d{4}),\s+(\d{2}):(\d{2})/)
+        if (!match) return null
+        const [, day, month, year, hour, minute] = match
+        return new Date(year, month - 1, day, hour, minute, 0)
+    }
+
     // Функция для получения цвета строки в зависимости от разницы времени
-    const getRowColorByTime = (dateStr) => {
-        const recordDate = parseDateTime(dateStr)
+    const getRowColorByTime = (dateStr, isCommandFormat = false) => {
+        const recordDate = isCommandFormat ? parseCommandDateTime(dateStr) : parseDateTime(dateStr)
         if (!recordDate) return ''
 
         const now = new Date()
         const diffMinutes = (now - recordDate) / (1000 * 60) // Разница в минутах
 
         if (diffMinutes < 0) return '' // Дата в будущем - не красим
-        if (diffMinutes <= 60) return 'rgba(144, 238, 144, 0.15)' // До 1 часа - зелёный
-        if (diffMinutes <= 240) return 'rgba(255, 165, 0, 0.125)' // До 4 часов - оранжевый
-        return 'rgba(255, 99, 71, 0.15)' // Более 4 часов - красный
+        if (diffMinutes <= 60) return 'rgba(144, 238, 144, 0.11)' // До 1 часа - зелёный
+        if (diffMinutes <= 240) return 'rgba(255, 165, 0, 0.10)' // До 4 часов - оранжевый
+        return 'rgba(255, 99, 71, 0.08)' // Более 4 часов - красный
+    }
+
+    // Функция для получения цвета ячейки статуса команды
+    const getCommandStatusColor = (statusText) => {
+        if (!statusText) return ''
+        const text = statusText.toLowerCase()
+        if (text.includes('выполнена')) return 'rgba(144, 238, 144, 0.4)' // Зелёный
+        if (text.includes('ожидает') || text.includes('связ')) return 'rgba(255, 165, 0, 0.3)' // Оранжевый
+        if (text.includes('отменена')) return 'rgba(255, 99, 71, 0.3)' // Красный
+        return ''
     }
 
     const processTable = () => {
@@ -169,9 +194,29 @@
 
         if (!visualEnabled) return // Если визуал отключен, не обрабатываем таблицу
 
+        // Определяем, на странице команд мы или телеметрии
+        const isCommandsPage = window.location.pathname.endsWith('/commands')
+
+        // Убираем слово "команды" из заголовков на странице команд
+        if (isCommandsPage) {
+            table.querySelectorAll('thead th').forEach((th) => {
+                const text = th.textContent.trim()
+                if (text === 'Время формирования команды') {
+                    th.textContent = 'Время формирования'
+                } else if (text === 'Время плановой отправки команды') {
+                    th.textContent = 'Время плановой отправки'
+                } else if (text === 'Время фактической отправки команды') {
+                    th.textContent = 'Время фактической отправки'
+                }
+            })
+        }
+
         const headers = Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent.trim())
+
         const colIdx = {
             dateTime: headers.findIndex((h) => h.includes('Дата и время приема сервером')),
+            commandTime: headers.findIndex((h) => h.includes('Время фактической отправки')),
+            commandStatus: headers.findIndex((h) => h === 'Статус' && isCommandsPage),
             valid: headers.findIndex((h) => h.includes('Валидность')),
             alarm: headers.findIndex((h) => h.includes('Тревога')),
             pinOut: headers.findIndex((h) => h.includes('Штырь извлечен')),
@@ -210,14 +255,43 @@
         table.querySelectorAll('tbody tr').forEach((row) => {
             const cells = row.querySelectorAll('td')
 
-            // Применяем цвет строки в зависимости от времени
-            if (colIdx.dateTime >= 0) {
-                const dateCell = cells[colIdx.dateTime]?.querySelector('div')
-                if (dateCell) {
-                    const dateStr = dateCell.textContent.trim()
-                    const backgroundColor = getRowColorByTime(dateStr)
-                    if (backgroundColor) {
-                        row.style.backgroundColor = backgroundColor
+            // Обработка для страницы команд
+            if (isCommandsPage) {
+                // Применяем цвет строки в зависимости от времени фактической отправки команды
+                if (colIdx.commandTime >= 0) {
+                    const dateCell = cells[colIdx.commandTime]?.querySelector('div')
+                    if (dateCell) {
+                        const dateStr = dateCell.textContent.trim()
+                        const backgroundColor = getRowColorByTime(dateStr, true)
+                        if (backgroundColor) {
+                            row.style.backgroundColor = backgroundColor
+                        }
+                    }
+                }
+
+                // Подсвечиваем ячейку статуса
+                if (colIdx.commandStatus >= 0) {
+                    const statusCell = cells[colIdx.commandStatus]?.querySelector('div')
+                    if (statusCell) {
+                        const statusText = statusCell.textContent.trim()
+                        const statusColor = getCommandStatusColor(statusText)
+                        if (statusColor) {
+                            statusCell.style.backgroundColor = statusColor
+                            statusCell.style.borderRadius = '4px'
+                            statusCell.style.padding = '4px 8px'
+                        }
+                    }
+                }
+            } else {
+                // Применяем цвет строки в зависимости от времени (для телеметрии)
+                if (colIdx.dateTime >= 0) {
+                    const dateCell = cells[colIdx.dateTime]?.querySelector('div')
+                    if (dateCell) {
+                        const dateStr = dateCell.textContent.trim()
+                        const backgroundColor = getRowColorByTime(dateStr)
+                        if (backgroundColor) {
+                            row.style.backgroundColor = backgroundColor
+                        }
                     }
                 }
             }
@@ -462,12 +536,13 @@
         if (!document.getElementById('toggle-visual-btn')) {
             const visualBtn = document.createElement('button')
             visualBtn.id = 'toggle-visual-btn'
-            visualBtn.textContent = 'Отключить'
+            // Устанавливаем текст и цвет в соответствии с текущим состоянием
+            visualBtn.textContent = visualEnabled ? 'Отключить' : 'Включить'
             visualBtn.style.cssText = `
                 position: fixed;
                 top: 20px;
                 left: 20px;
-                background: #dc3545;
+                background: ${visualEnabled ? '#dc3545' : '#28a745'};
                 color: white;
                 border: none;
                 border-radius: 5px;
@@ -482,16 +557,23 @@
                 visualBtn.textContent = visualEnabled ? 'Отключить' : 'Включить'
                 visualBtn.style.background = visualEnabled ? '#dc3545' : '#28a745'
 
+                // Получаем актуальную ссылку на таблицу
+                const currentTable = document.querySelector('.grid-table')
+                if (!currentTable) return
+
                 // Перезапускаем обработку таблицы
                 if (!visualEnabled) {
                     // Сбрасываем цвет фона строк
-                    table.querySelectorAll('tbody tr').forEach((row) => {
+                    currentTable.querySelectorAll('tbody tr').forEach((row) => {
                         row.style.backgroundColor = ''
                     })
 
                     // Сбрасываем все стили
-                    table.querySelectorAll('td span, td div, td i').forEach((el) => {
+                    currentTable.querySelectorAll('td span, td div, td i').forEach((el) => {
                         el.style.color = ''
+                        el.style.backgroundColor = ''
+                        el.style.borderRadius = ''
+                        el.style.padding = ''
                         if (el.tagName.toLowerCase() === 'span') {
                             if (el.innerHTML === '🟢' || el.innerHTML === '🔴') {
                                 el.innerHTML = el.innerHTML === '🟢' ? 'Валидная' : 'Невалидная'
@@ -506,26 +588,30 @@
                     })
 
                     // Сбрасываем стили координат
-                    table.querySelectorAll('td span').forEach((span) => {
+                    currentTable.querySelectorAll('td span').forEach((span) => {
                         span.style.cursor = ''
                         span.removeEventListener('click', () => {}) // Убираем обработчики
                     })
 
                     // Сбрасываем стили таблицы
-                    table.querySelectorAll('td, th').forEach((el) => {
+                    currentTable.querySelectorAll('td, th').forEach((el) => {
                         el.style.padding = ''
                         el.style.paddingLeft = ''
                         el.style.paddingRight = ''
                         el.style.minWidth = ''
                     })
 
+                    // Получаем актуальные заголовки для определения скрытых столбцов
+                    const currentHeaders = Array.from(currentTable.querySelectorAll('thead th')).map((th) => th.textContent.trim())
+                    const currentTempColIdx = currentHeaders.findIndex((h) => h.includes('Датчики температуры'))
+
                     // Показываем скрытые столбцы
-                    const ths = table.querySelectorAll('thead th')
-                    const rows = table.querySelectorAll('tbody tr')
+                    const ths = currentTable.querySelectorAll('thead th')
+                    const rows = currentTable.querySelectorAll('tbody tr')
                     const hideCols = [
-                        headers.findIndex((h) => h.includes('Ускорение')),
-                        headers.findIndex((h) => h.includes('Штырь извлечен')),
-                        tempColIdx,
+                        currentHeaders.findIndex((h) => h.includes('Ускорение')),
+                        currentHeaders.findIndex((h) => h.includes('Штырь извлечен')),
+                        currentTempColIdx,
                     ].filter((idx) => idx >= 0)
                     hideCols.forEach((idx) => {
                         if (idx >= 0) {
@@ -560,9 +646,9 @@
                     const tempBtn = document.getElementById('toggle-temp-btn')
                     if (tempBtn) tempBtn.style.display = ''
 
-                    // Показываем и включаем кнопку автообновления
+                    // Показываем и включаем кнопку автообновления (если она существует и мы на нужной странице)
                     const refreshBtn = document.getElementById('auto-refresh-btn')
-                    if (refreshBtn) {
+                    if (refreshBtn && isAutoRefreshPage()) {
                         refreshBtn.style.display = ''
                         // Включаем автообновление обратно
                         if (!autoRefreshEnabled) {
@@ -580,8 +666,8 @@
             document.body.appendChild(visualBtn)
         }
 
-        // Создаем кнопку автообновления
-        if (!document.getElementById('auto-refresh-btn')) {
+        // Создаем кнопку автообновления только на страницах /devices/item/*/telemetry и /devices/item/*/commands
+        if (!document.getElementById('auto-refresh-btn') && isAutoRefreshPage()) {
             const refreshBtn = document.createElement('button')
             refreshBtn.id = 'auto-refresh-btn'
             refreshBtn.title = autoRefreshEnabled ? 'Отключить автообновление (50с)' : 'Включить автообновление (50с)'
@@ -745,13 +831,17 @@
 
     // Возвращаем интервал вместо MutationObserver
     const intervalId = setInterval(() => {
-        processTable()
+        // Применяем обработку таблицы только если визуал включен
+        if (visualEnabled) {
+            processTable()
+        }
+
         // Проверяем и пересоздаем кнопки если они пропали
-        if (
-            !document.getElementById('toggle-visual-btn') ||
-            !document.getElementById('auto-refresh-btn') ||
-            !document.getElementById('toggle-temp-btn')
-        ) {
+        const missingVisualBtn = !document.getElementById('toggle-visual-btn')
+        const missingRefreshBtn = isAutoRefreshPage() && !document.getElementById('auto-refresh-btn')
+        const missingTempBtn = !document.getElementById('toggle-temp-btn')
+
+        if (missingVisualBtn || missingRefreshBtn || missingTempBtn) {
             createControlButtons()
         }
     }, 200)
