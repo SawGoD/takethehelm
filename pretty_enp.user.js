@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      0.9.3
-// @description  Раздел ЭНП становится прекраснее
+// @version      0.9.5
+// @description  Раздел с телеметрией ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=crcp.ru
@@ -140,6 +140,29 @@
         }
     }
 
+    // Функция для парсинга даты из строки формата "05.01.2026 17:14:11"
+    const parseDateTime = (dateStr) => {
+        if (!dateStr) return null
+        const match = dateStr.trim().match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/)
+        if (!match) return null
+        const [, day, month, year, hour, minute, second] = match
+        return new Date(year, month - 1, day, hour, minute, second)
+    }
+
+    // Функция для получения цвета строки в зависимости от разницы времени
+    const getRowColorByTime = (dateStr) => {
+        const recordDate = parseDateTime(dateStr)
+        if (!recordDate) return ''
+
+        const now = new Date()
+        const diffMinutes = (now - recordDate) / (1000 * 60) // Разница в минутах
+
+        if (diffMinutes < 0) return '' // Дата в будущем - не красим
+        if (diffMinutes <= 60) return 'rgba(144, 238, 144, 0.15)' // До 1 часа - зелёный
+        if (diffMinutes <= 240) return 'rgba(255, 165, 0, 0.125)' // До 4 часов - оранжевый
+        return 'rgba(255, 99, 71, 0.15)' // Более 4 часов - красный
+    }
+
     const processTable = () => {
         const table = document.querySelector('.grid-table')
         if (!table) return
@@ -148,6 +171,7 @@
 
         const headers = Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent.trim())
         const colIdx = {
+            dateTime: headers.findIndex((h) => h.includes('Дата и время приема сервером')),
             valid: headers.findIndex((h) => h.includes('Валидность')),
             alarm: headers.findIndex((h) => h.includes('Тревога')),
             pinOut: headers.findIndex((h) => h.includes('Штырь извлечен')),
@@ -185,6 +209,19 @@
         }
         table.querySelectorAll('tbody tr').forEach((row) => {
             const cells = row.querySelectorAll('td')
+
+            // Применяем цвет строки в зависимости от времени
+            if (colIdx.dateTime >= 0) {
+                const dateCell = cells[colIdx.dateTime]?.querySelector('div')
+                if (dateCell) {
+                    const dateStr = dateCell.textContent.trim()
+                    const backgroundColor = getRowColorByTime(dateStr)
+                    if (backgroundColor) {
+                        row.style.backgroundColor = backgroundColor
+                    }
+                }
+            }
+
             if (colIdx.valid >= 0) {
                 const el = cells[colIdx.valid].querySelector('span')
                 if (el) replaceWithIcon(el, el.textContent.includes('Валидная'))
@@ -447,6 +484,11 @@
 
                 // Перезапускаем обработку таблицы
                 if (!visualEnabled) {
+                    // Сбрасываем цвет фона строк
+                    table.querySelectorAll('tbody tr').forEach((row) => {
+                        row.style.backgroundColor = ''
+                    })
+
                     // Сбрасываем все стили
                     table.querySelectorAll('td span, td div, td i').forEach((el) => {
                         el.style.color = ''
