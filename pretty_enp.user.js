@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      1.0.2
+// @version      2.0.3
 // @description  Раздел с телеметрией ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -14,191 +14,468 @@
 ;(function () {
     'use strict'
 
-    let visualEnabled = true // Глобальная переменная для отслеживания состояния визуала
-    let autoRefreshEnabled = true // Автообновление включено по умолчанию
-    let autoRefreshInterval = null // Хранит ID интервала автообновления
-    let countdownInterval = null // Хранит ID интервала отсчета
-    let timeLeft = 50 // Время до обновления в секундах
+    // ========================================
+    // Утилиты и хелперы
+    // ========================================
 
-    const setColor = (el, color) => {
-        if (el && visualEnabled) el.style.color = color
+    const Utils = {
+        parseDateTime(dateStr) {
+            if (!dateStr) return null
+            const match = dateStr.trim().match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/)
+            if (!match) return null
+            const [, day, month, year, hour, minute, second] = match
+            return new Date(year, month - 1, day, hour, minute, second)
+        },
+
+        parseCommandDateTime(dateStr) {
+            if (!dateStr || dateStr.trim() === '-') return null
+            const match = dateStr.trim().match(/(\d{2})\.(\d{2})\.(\d{4}),\s+(\d{2}):(\d{2})/)
+            if (!match) return null
+            const [, day, month, year, hour, minute] = match
+            return new Date(year, month - 1, day, hour, minute, 0)
+        },
+
+        getRowColorByTime(dateStr, isCommandFormat = false) {
+            const recordDate = isCommandFormat ? this.parseCommandDateTime(dateStr) : this.parseDateTime(dateStr)
+            if (!recordDate) return ''
+
+            const now = new Date()
+            const diffMinutes = (now - recordDate) / (1000 * 60)
+
+            if (diffMinutes < 0) return ''
+            if (diffMinutes <= 60) return 'rgba(144, 238, 144, 0.11)'
+            if (diffMinutes <= 240) return 'rgba(255, 165, 0, 0.10)'
+            return 'rgba(255, 99, 71, 0.08)'
+        },
+
+        getCommandStatusColor(statusText) {
+            if (!statusText) return ''
+            const text = statusText.toLowerCase()
+            if (text.includes('выполнена')) return 'rgba(144, 238, 144, 0.4)'
+            if (text.includes('ожидает') || text.includes('связ')) return 'rgba(255, 165, 0, 0.3)'
+            if (text.includes('отменена')) return 'rgba(255, 99, 71, 0.3)'
+            return ''
+        },
+
+        formatDate(date) {
+            return date.toISOString().split('T')[0]
+        },
     }
 
-    const replaceWithIcon = (el, isValid) => {
-        if (!el) return
-        if (visualEnabled) {
+    // ========================================
+    // Детектор типа таблицы
+    // ========================================
+
+    class TableDetector {
+        detect(table) {
+            if (!table) return 'unknown'
+
+            const headers = Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent.trim())
+
+            // Определяем по наличию специфичных заголовков
+            const hasTelemetryHeaders = headers.some((h) => h.includes('Дата и время приема сервером'))
+            const hasCommandHeaders = headers.some((h) => h.includes('Время формирования') || h.includes('Время плановой отправки'))
+
+            if (hasCommandHeaders) return 'commands'
+            if (hasTelemetryHeaders) return 'telemetry'
+            return 'unknown'
+        }
+
+        getHeaders(table) {
+            return Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent.trim())
+        }
+
+        getColumnIndexes(headers, type) {
+            const baseIndexes = {
+                acceleration: headers.findIndex((h) => h.includes('Ускорение')),
+                pinOut: headers.findIndex((h) => h.includes('Штырь извлечен')),
+            }
+
+            if (type === 'telemetry') {
+                return {
+                    ...baseIndexes,
+                    dateTime: headers.findIndex((h) => h.includes('Дата и время приема сервером')),
+                    valid: headers.findIndex((h) => h.includes('Валидность')),
+                    alarm: headers.findIndex((h) => h.includes('Тревога')),
+                    pinHack: headers.findIndex((h) => h.includes('Штырь взломан')),
+                    pinSet: headers.findIndex((h) => h.includes('Штырь установлен')),
+                    caseOpen: headers.findIndex((h) => h.includes('Вскрытие корпуса')),
+                    lockFail: headers.findIndex((h) => h.includes('Неисправен замок')),
+                    caseHack: headers.findIndex((h) => h.includes('Попытка взлома корпуса')),
+                    lockStatus: headers.findIndex((h) => h.includes('Статус замка')),
+                    temperature: headers.findIndex((h) => h.includes('Датчики температуры')),
+                    signal: headers.findIndex((h) => h.includes('Качество сигнала')),
+                    satellites: headers.findIndex((h) => h.includes('Количество спутников')),
+                    battery: headers.findIndex((h) => h.includes('% заряда батареи')),
+                    status: headers.findIndex((h) => h.includes('Статус ЭНП')),
+                    latlon: headers.findIndex((h) => h.includes('Широта/Долгота')),
+                }
+            } else if (type === 'commands') {
+                return {
+                    ...baseIndexes,
+                    commandTime: headers.findIndex((h) => h.includes('Время фактической отправки')),
+                    commandStatus: headers.findIndex((h) => h === 'Статус'),
+                }
+            }
+
+            return baseIndexes
+        }
+    }
+
+    // ========================================
+    // Базовый процессор таблиц
+    // ========================================
+
+    class BaseTableProcessor {
+        constructor(state) {
+            this.state = state
+        }
+
+        setColor(el, color) {
+            if (el && this.state.visualEnabled) el.style.color = color
+        }
+
+        replaceWithIcon(el, isValid) {
+            if (!el || !this.state.visualEnabled) return
             el.innerHTML = isValid || el.innerHTML === '🟢' ? '🟢' : '🔴'
             el.style.fontSize = '1.5em'
             el.style.textAlign = 'center'
         }
-    }
 
-    const formatDate = (date) => {
-        return date.toISOString().split('T')[0]
-    }
+        hideColumns(table, colIndexes) {
+            const hideCols = [colIndexes.acceleration, colIndexes.pinOut].filter((idx) => idx >= 0)
+            if (!hideCols.length) return
 
-    const makeSerialNumberClickable = () => {
-        const subtitle = document.querySelector('.page-h1__subtitle')
-        if (!subtitle) return
+            const ths = table.querySelectorAll('thead th')
+            hideCols.forEach((idx) => {
+                if (ths[idx]) ths[idx].style.display = 'none'
+            })
 
-        const text = subtitle.textContent
-        const snMatch = text.match(/Серийный номер: (\d+)/)
-        if (!snMatch) return
-
-        const serialNumber = snMatch[1]
-        const cleanInput = serialNumber
-
-        const now = new Date()
-        const startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-        const endDate = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-
-        const url = `http://oper.crcp.ru/vyg21.php?sn=${cleanInput}&sdt=1&d1=${formatDate(startDate)}&d2=${formatDate(endDate)}`
-
-        // Сохраняем оригинальную структуру с переносами строк
-        const originalHTML = subtitle.innerHTML
-        const newHTML = originalHTML.replace(
-            /(Серийный номер: )(\d+)/,
-            `$1<a href="#" style="text-decoration: underline; color: #0066cc; cursor: pointer;">$2</a>`
-        )
-
-        subtitle.innerHTML = newHTML
-
-        // Добавляем обработчик клика
-        const link = subtitle.querySelector('a')
-        if (link) {
-            link.addEventListener('click', (e) => {
-                e.preventDefault()
-                window.open(url, '_blank')
+            table.querySelectorAll('tbody tr').forEach((row) => {
+                const tds = row.querySelectorAll('td')
+                hideCols.forEach((idx) => {
+                    if (tds[idx]) tds[idx].style.display = 'none'
+                })
             })
         }
-    }
 
-    // Функция для открытия карты
-    const openMap = (mapUrl) => {
-        let existingMap = document.getElementById('coordinates-map')
-        if (existingMap) {
-            // Обновляем существующий iframe
-            const iframe = existingMap.querySelector('iframe')
-            if (iframe) {
-                iframe.src = mapUrl
+        applyTableStyles(table, colIdx) {
+            table.querySelectorAll('td, th').forEach((cell) => {
+                cell.style.padding = '4px 12px'
+            })
+
+            if (colIdx.latlon >= 0) {
+                const coordCells = table.querySelectorAll(`td:nth-child(${colIdx.latlon + 1}), th:nth-child(${colIdx.latlon + 1})`)
+                coordCells.forEach((cell) => {
+                    cell.style.paddingRight = '75px'
+                })
             }
-            return
-        }
 
-        const mapContainer = document.createElement('div')
-        mapContainer.id = 'coordinates-map'
-        mapContainer.style.cssText = `
-            width: 100%;
-            height: 400px;
-            margin-top: 20px;
-            border: 2px solid #ddd;
-            border-radius: 8px;
-            position: relative;
-            background: white;
-        `
-
-        const closeBtn = document.createElement('button')
-        closeBtn.textContent = '✕'
-        closeBtn.style.cssText = `
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: #ff4444;
-            color: white;
-            border: none;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            cursor: pointer;
-            font-size: 16px;
-            z-index: 10001;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 0;
-        `
-
-        closeBtn.addEventListener('click', () => {
-            mapContainer.remove()
-        })
-
-        const iframe = document.createElement('iframe')
-        iframe.src = mapUrl
-        iframe.style.cssText = `
-            width: 100%;
-            height: 100%;
-            border: none;
-            border-radius: 8px;
-        `
-
-        mapContainer.appendChild(closeBtn)
-        mapContainer.appendChild(iframe)
-
-        const table = document.querySelector('.grid-table')
-        if (table) {
-            table.parentNode.insertBefore(mapContainer, table.nextSibling)
+            if (colIdx.valid >= 0) {
+                const validCells = table.querySelectorAll(`td:nth-child(${colIdx.valid + 1}), th:nth-child(${colIdx.valid + 1})`)
+                validCells.forEach((cell) => {
+                    cell.style.paddingLeft = '20px'
+                })
+            }
         }
     }
 
-    // Функция для проверки, находимся ли мы на странице с телеметрией или командами
-    const isAutoRefreshPage = () => {
-        const path = window.location.pathname
-        return path.includes('/devices/item/') && (path.endsWith('/telemetry') || path.endsWith('/commands'))
+    // ========================================
+    // Процессор телеметрии
+    // ========================================
+
+    class TelemetryProcessor extends BaseTableProcessor {
+        process(table) {
+            if (!this.state.visualEnabled) return
+
+            const detector = new TableDetector()
+            const headers = detector.getHeaders(table)
+            const colIdx = detector.getColumnIndexes(headers, 'telemetry')
+
+            this.hideColumns(table, colIdx)
+            this.processRows(table, colIdx)
+            this.applyTableStyles(table, colIdx)
+        }
+
+        processRows(table, colIdx) {
+            table.querySelectorAll('tbody tr').forEach((row) => {
+                const cells = row.querySelectorAll('td')
+
+                // Подсветка строки по времени
+                if (colIdx.dateTime >= 0) {
+                    const dateCell = cells[colIdx.dateTime]?.querySelector('div')
+                    if (dateCell) {
+                        const dateStr = dateCell.textContent.trim()
+                        const backgroundColor = Utils.getRowColorByTime(dateStr)
+                        if (backgroundColor) {
+                            row.style.backgroundColor = backgroundColor
+                        }
+                    }
+                }
+
+                this.processValidation(cells, colIdx)
+                this.processAlarms(cells, colIdx)
+                this.processLockStatus(cells, colIdx)
+                this.processSignals(cells, colIdx)
+                this.processBattery(cells, colIdx)
+                this.processStatus(cells, colIdx)
+                this.processTemperature(cells, colIdx)
+                this.processCoordinates(cells, colIdx)
+            })
+        }
+
+        processValidation(cells, colIdx) {
+            if (colIdx.valid >= 0) {
+                const el = cells[colIdx.valid].querySelector('span')
+                if (el) this.replaceWithIcon(el, el.textContent.includes('Валидная'))
+            }
+        }
+
+        processAlarms(cells, colIdx) {
+            ;[
+                { idx: colIdx.alarm, yes: 'Да', no: 'Нет' },
+                { idx: colIdx.pinHack, yes: 'Да', no: 'Нет' },
+                { idx: colIdx.caseOpen, yes: 'Да', no: 'Нет' },
+                { idx: colIdx.lockFail, yes: 'Да', no: 'Нет' },
+                { idx: colIdx.caseHack, yes: 'Да', no: 'Нет' },
+            ].forEach(({ idx, yes, no }) => {
+                if (idx >= 0) {
+                    const el = cells[idx].querySelector('span')
+                    if (el) this.setColor(el, el.textContent.trim() === yes ? 'red' : 'green')
+                }
+            })
+
+            if (colIdx.pinSet >= 0) {
+                const el = cells[colIdx.pinSet].querySelector('span')
+                if (el) this.setColor(el, el.textContent.trim() === 'Нет' ? 'red' : 'green')
+            }
+        }
+
+        processLockStatus(cells, colIdx) {
+            if (colIdx.lockStatus >= 0) {
+                const el = cells[colIdx.lockStatus].querySelector('i')
+                if (el) {
+                    if (el.classList.contains('el-icon-unlock')) {
+                        this.setColor(el, 'red')
+                    } else if (el.classList.contains('el-icon-lock')) {
+                        this.setColor(el, 'green')
+                    }
+                }
+            }
+        }
+
+        processSignals(cells, colIdx) {
+            if (colIdx.signal >= 0) {
+                const el = cells[colIdx.signal].querySelector('div')
+                if (el) {
+                    const val = parseInt(el.textContent.trim(), 10)
+                    el.style.color = val === 0 ? 'red' : val > 0 ? 'green' : ''
+                }
+            }
+
+            if (colIdx.satellites >= 0) {
+                const el = cells[colIdx.satellites].querySelector('div')
+                if (el) {
+                    const val = parseInt(el.textContent.trim(), 10)
+                    el.style.color = val === 0 ? 'red' : val > 0 ? 'green' : ''
+                }
+            }
+        }
+
+        processBattery(cells, colIdx) {
+            if (colIdx.battery >= 0) {
+                const el = cells[colIdx.battery].querySelector('div')
+                if (el) {
+                    const val = parseInt(el.textContent.trim(), 10)
+                    el.style.color = val < 25 ? 'red' : val < 50 ? 'orange' : val <= 100 ? 'green' : ''
+                }
+            }
+        }
+
+        processStatus(cells, colIdx) {
+            if (colIdx.status >= 0) {
+                const el = cells[colIdx.status].querySelector('span')
+                if (el) {
+                    const txt = el.textContent.trim()
+                    if (this.state.visualEnabled && txt === 'Под охраной') {
+                        el.innerHTML = 'Охрана'
+                    }
+                    el.style.color = txt === 'Под охраной' || txt === 'Охрана' ? 'green' : txt === 'Сон' ? 'red' : ''
+                }
+            }
+        }
+
+        processTemperature(cells, colIdx) {
+            if (colIdx.temperature < 0) return
+
+            const tempCell = cells[colIdx.temperature]
+            if (!tempCell) return
+
+            const tempBtn = document.getElementById('toggle-temp-btn')
+            const showAllSensors = tempBtn && tempBtn.dataset.tempVisible === 'true'
+            const alreadyProcessed = tempCell.dataset.processed === 'true'
+
+            if (!alreadyProcessed) {
+                const innerSensorDiv = tempCell.querySelector('div[data-title="Внутренний датчик"]')
+                if (innerSensorDiv) {
+                    const tempValue = innerSensorDiv.textContent.match(/\d+/)?.[0]
+                    if (tempValue) {
+                        if (!tempCell.dataset.originalContent) {
+                            tempCell.dataset.originalContent = tempCell.innerHTML
+                        }
+
+                        if (!showAllSensors) {
+                            const simplifiedDiv = document.createElement('div')
+                            simplifiedDiv.className = 'el-tooltip bold simplified-temp'
+                            simplifiedDiv.style.cssText = 'padding: 4px 8px;'
+                            simplifiedDiv.textContent = `${tempValue}°`
+
+                            tempCell.innerHTML = ''
+                            tempCell.appendChild(simplifiedDiv)
+                        }
+
+                        tempCell.dataset.processed = 'true'
+                    }
+                }
+            }
+        }
+
+        processCoordinates(cells, colIdx) {
+            if (colIdx.latlon < 0) return
+
+            const coordCell = cells[colIdx.latlon]
+            const latDiv = coordCell.querySelector('div[data-title="Широта"]')
+            const lonDiv = coordCell.querySelector('div[data-title="Долгота"]')
+
+            if (!latDiv || !lonDiv || !this.state.visualEnabled) return
+
+            const latSpan = latDiv.querySelector('span')
+            const lonSpan = lonDiv.querySelector('span')
+
+            if (!latSpan || !lonSpan) return
+
+            const latText = latSpan.textContent.trim()
+            const lonText = lonSpan.textContent.trim()
+
+            const lat = parseFloat(latText.replace(',', '.'))
+            const lon = parseFloat(lonText.replace(',', '.'))
+
+            if (!isNaN(lat) && lat !== 0) {
+                const latFormatted = lat.toFixed(5)
+                latSpan.textContent = latFormatted.endsWith('.00000') ? latFormatted.slice(0, -4) : latFormatted
+                latSpan.style.color = '#0066cc'
+                latSpan.style.cursor = 'pointer'
+
+                latDiv.style.display = 'inline'
+                latDiv.style.marginRight = '10px'
+
+                latSpan.onclick = () => {
+                    if (!isNaN(lon) && lon !== 0) {
+                        const mapUrl = `https://www.google.com/maps/embed/v1/place?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&q=${lat},${lon}&zoom=15`
+                        this.openMap(mapUrl)
+                    }
+                }
+            }
+
+            if (!isNaN(lon) && lon !== 0) {
+                const lonFormatted = lon.toFixed(5)
+                lonSpan.textContent = lonFormatted.endsWith('.00000') ? lonFormatted.slice(0, -4) : lonFormatted
+                lonSpan.style.color = '#0066cc'
+                lonSpan.style.cursor = 'pointer'
+
+                lonDiv.style.display = 'inline'
+
+                lonSpan.onclick = () => {
+                    if (!isNaN(lat) && lat !== 0) {
+                        const mapUrl = `https://www.google.com/maps/embed/v1/place?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&q=${lat},${lon}&zoom=15`
+                        this.openMap(mapUrl)
+                    }
+                }
+            }
+        }
+
+        openMap(mapUrl) {
+            let existingMap = document.getElementById('coordinates-map')
+            if (existingMap) {
+                const iframe = existingMap.querySelector('iframe')
+                if (iframe) iframe.src = mapUrl
+                return
+            }
+
+            const mapContainer = document.createElement('div')
+            mapContainer.id = 'coordinates-map'
+            mapContainer.style.cssText = `
+                width: 100%;
+                height: 400px;
+                margin-top: 20px;
+                border: 2px solid #ddd;
+                border-radius: 8px;
+                position: relative;
+                background: white;
+            `
+
+            const closeBtn = document.createElement('button')
+            closeBtn.textContent = '✕'
+            closeBtn.style.cssText = `
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                background: #ff4444;
+                color: white;
+                border: none;
+                border-radius: 50%;
+                width: 30px;
+                height: 30px;
+                cursor: pointer;
+                font-size: 16px;
+                z-index: 10001;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 0;
+            `
+
+            closeBtn.addEventListener('click', () => mapContainer.remove())
+
+            const iframe = document.createElement('iframe')
+            iframe.src = mapUrl
+            iframe.style.cssText = `
+                width: 100%;
+                height: 100%;
+                border: none;
+                border-radius: 8px;
+            `
+
+            mapContainer.appendChild(closeBtn)
+            mapContainer.appendChild(iframe)
+
+            const table = document.querySelector('.grid-table')
+            if (table) {
+                table.parentNode.insertBefore(mapContainer, table.nextSibling)
+            }
+        }
     }
 
-    // Функция для парсинга даты из строки формата "05.01.2026 17:14:11"
-    const parseDateTime = (dateStr) => {
-        if (!dateStr) return null
-        const match = dateStr.trim().match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/)
-        if (!match) return null
-        const [, day, month, year, hour, minute, second] = match
-        return new Date(year, month - 1, day, hour, minute, second)
-    }
+    // ========================================
+    // Процессор команд
+    // ========================================
 
-    // Функция для парсинга даты из формата команд "07.01.2026, 15:44"
-    const parseCommandDateTime = (dateStr) => {
-        if (!dateStr || dateStr.trim() === '-') return null
-        const match = dateStr.trim().match(/(\d{2})\.(\d{2})\.(\d{4}),\s+(\d{2}):(\d{2})/)
-        if (!match) return null
-        const [, day, month, year, hour, minute] = match
-        return new Date(year, month - 1, day, hour, minute, 0)
-    }
+    class CommandsProcessor extends BaseTableProcessor {
+        process(table) {
+            if (!this.state.visualEnabled) return
 
-    // Функция для получения цвета строки в зависимости от разницы времени
-    const getRowColorByTime = (dateStr, isCommandFormat = false) => {
-        const recordDate = isCommandFormat ? parseCommandDateTime(dateStr) : parseDateTime(dateStr)
-        if (!recordDate) return ''
+            this.simplifyHeaders(table)
 
-        const now = new Date()
-        const diffMinutes = (now - recordDate) / (1000 * 60) // Разница в минутах
+            const detector = new TableDetector()
+            const headers = detector.getHeaders(table)
+            const colIdx = detector.getColumnIndexes(headers, 'commands')
 
-        if (diffMinutes < 0) return '' // Дата в будущем - не красим
-        if (diffMinutes <= 60) return 'rgba(144, 238, 144, 0.11)' // До 1 часа - зелёный
-        if (diffMinutes <= 240) return 'rgba(255, 165, 0, 0.10)' // До 4 часов - оранжевый
-        return 'rgba(255, 99, 71, 0.08)' // Более 4 часов - красный
-    }
+            this.hideColumns(table, colIdx)
+            this.processRows(table, colIdx)
+            this.applyTableStyles(table, colIdx)
+        }
 
-    // Функция для получения цвета ячейки статуса команды
-    const getCommandStatusColor = (statusText) => {
-        if (!statusText) return ''
-        const text = statusText.toLowerCase()
-        if (text.includes('выполнена')) return 'rgba(144, 238, 144, 0.4)' // Зелёный
-        if (text.includes('ожидает') || text.includes('связ')) return 'rgba(255, 165, 0, 0.3)' // Оранжевый
-        if (text.includes('отменена')) return 'rgba(255, 99, 71, 0.3)' // Красный
-        return ''
-    }
-
-    const processTable = () => {
-        const table = document.querySelector('.grid-table')
-        if (!table) return
-
-        if (!visualEnabled) return // Если визуал отключен, не обрабатываем таблицу
-
-        // Определяем, на странице команд мы или телеметрии
-        const isCommandsPage = window.location.pathname.endsWith('/commands')
-
-        // Убираем слово "команды" из заголовков на странице команд
-        if (isCommandsPage) {
+        simplifyHeaders(table) {
             table.querySelectorAll('thead th').forEach((th) => {
                 const text = th.textContent.trim()
                 if (text === 'Время формирования команды') {
@@ -211,70 +488,28 @@
             })
         }
 
-        const headers = Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent.trim())
-
-        const colIdx = {
-            dateTime: headers.findIndex((h) => h.includes('Дата и время приема сервером')),
-            commandTime: headers.findIndex((h) => h.includes('Время фактической отправки')),
-            commandStatus: headers.findIndex((h) => h === 'Статус' && isCommandsPage),
-            valid: headers.findIndex((h) => h.includes('Валидность')),
-            alarm: headers.findIndex((h) => h.includes('Тревога')),
-            pinOut: headers.findIndex((h) => h.includes('Штырь извлечен')),
-            pinHack: headers.findIndex((h) => h.includes('Штырь взломан')),
-            pinSet: headers.findIndex((h) => h.includes('Штырь установлен')),
-            caseOpen: headers.findIndex((h) => h.includes('Вскрытие корпуса')),
-            lockFail: headers.findIndex((h) => h.includes('Неисправен замок')),
-            caseHack: headers.findIndex((h) => h.includes('Попытка взлома корпуса')),
-            lockStatus: headers.findIndex((h) => h.includes('Статус замка')),
-            acceleration: headers.findIndex((h) => h.includes('Ускорение')),
-            temperature: headers.findIndex((h) => h.includes('Датчики температуры')),
-            signal: headers.findIndex((h) => h.includes('Качество сигнала')),
-            satellites: headers.findIndex((h) => h.includes('Количество спутников')),
-            battery: headers.findIndex((h) => h.includes('% заряда батареи')),
-            status: headers.findIndex((h) => h.includes('Статус ЭНП')),
-            lat: headers.findIndex((h) => h.includes('Широта')),
-            lon: headers.findIndex((h) => h.includes('Долгота')),
-            latlon: headers.findIndex((h) => h.includes('Широта/Долгота')),
-        }
-        // Скрываем столбцы "Ускорение", "Штырь извлечён" и "Датчики температуры"
-        const hideCols = [colIdx.acceleration, colIdx.pinOut, colIdx.temperature].filter((idx) => idx >= 0)
-        if (hideCols.length) {
-            // Скрыть заголовки
-            const ths = table.querySelectorAll('thead th')
-            hideCols.forEach((idx) => {
-                if (ths[idx]) ths[idx].style.display = 'none'
-            })
-            // Скрыть все ячейки этих столбцов
+        processRows(table, colIdx) {
             table.querySelectorAll('tbody tr').forEach((row) => {
-                const tds = row.querySelectorAll('td')
-                hideCols.forEach((idx) => {
-                    if (tds[idx]) tds[idx].style.display = 'none'
-                })
-            })
-        }
-        table.querySelectorAll('tbody tr').forEach((row) => {
-            const cells = row.querySelectorAll('td')
+                const cells = row.querySelectorAll('td')
 
-            // Обработка для страницы команд
-            if (isCommandsPage) {
-                // Применяем цвет строки в зависимости от времени фактической отправки команды
+                // Подсветка строки по времени отправки
                 if (colIdx.commandTime >= 0) {
                     const dateCell = cells[colIdx.commandTime]?.querySelector('div')
                     if (dateCell) {
                         const dateStr = dateCell.textContent.trim()
-                        const backgroundColor = getRowColorByTime(dateStr, true)
+                        const backgroundColor = Utils.getRowColorByTime(dateStr, true)
                         if (backgroundColor) {
                             row.style.backgroundColor = backgroundColor
                         }
                     }
                 }
 
-                // Подсвечиваем ячейку статуса
+                // Подсветка ячейки статуса
                 if (colIdx.commandStatus >= 0) {
                     const statusCell = cells[colIdx.commandStatus]?.querySelector('div')
                     if (statusCell) {
                         const statusText = statusCell.textContent.trim()
-                        const statusColor = getCommandStatusColor(statusText)
+                        const statusColor = Utils.getCommandStatusColor(statusText)
                         if (statusColor) {
                             statusCell.style.backgroundColor = statusColor
                             statusCell.style.borderRadius = '4px'
@@ -282,267 +517,61 @@
                         }
                     }
                 }
-            } else {
-                // Применяем цвет строки в зависимости от времени (для телеметрии)
-                if (colIdx.dateTime >= 0) {
-                    const dateCell = cells[colIdx.dateTime]?.querySelector('div')
-                    if (dateCell) {
-                        const dateStr = dateCell.textContent.trim()
-                        const backgroundColor = getRowColorByTime(dateStr)
-                        if (backgroundColor) {
-                            row.style.backgroundColor = backgroundColor
-                        }
-                    }
-                }
-            }
-
-            if (colIdx.valid >= 0) {
-                const el = cells[colIdx.valid].querySelector('span')
-                if (el) replaceWithIcon(el, el.textContent.includes('Валидная'))
-            }
-            ;[
-                { idx: colIdx.alarm, yes: 'Да', no: 'Нет' },
-                { idx: colIdx.pinHack, yes: 'Да', no: 'Нет' },
-                { idx: colIdx.caseOpen, yes: 'Да', no: 'Нет' },
-                { idx: colIdx.lockFail, yes: 'Да', no: 'Нет' },
-                { idx: colIdx.caseHack, yes: 'Да', no: 'Нет' },
-            ].forEach(({ idx, yes, no }) => {
-                if (idx >= 0) {
-                    const el = cells[idx].querySelector('span')
-                    if (el) setColor(el, el.textContent.trim() === yes ? 'red' : 'green')
-                }
             })
-            if (colIdx.pinSet >= 0) {
-                const el = cells[colIdx.pinSet].querySelector('span')
-                if (el) setColor(el, el.textContent.trim() === 'Нет' ? 'red' : 'green')
-            }
-            if (colIdx.lockStatus >= 0) {
-                const el = cells[colIdx.lockStatus].querySelector('i')
-                if (el) {
-                    if (el.classList.contains('el-icon-unlock')) {
-                        setColor(el, 'red')
-                    } else if (el.classList.contains('el-icon-lock')) {
-                        setColor(el, 'green')
-                    }
-                }
-            }
-            // Качество сигнала и Количество спутников
-            if (colIdx.signal >= 0) {
-                const el = cells[colIdx.signal].querySelector('div')
-                if (el) {
-                    const val = parseInt(el.textContent.trim(), 10)
-                    el.style.color = val === 0 ? 'red' : val > 0 ? 'green' : ''
-                }
-            }
-            if (colIdx.satellites >= 0) {
-                const el = cells[colIdx.satellites].querySelector('div')
-                if (el) {
-                    const val = parseInt(el.textContent.trim(), 10)
-                    el.style.color = val === 0 ? 'red' : val > 0 ? 'green' : ''
-                }
-            }
-            // Заряд батареи
-            if (colIdx.battery >= 0) {
-                const el = cells[colIdx.battery].querySelector('div')
-                if (el) {
-                    const val = parseInt(el.textContent.trim(), 10)
-                    el.style.color = val < 25 ? 'red' : val < 50 ? 'orange' : val <= 100 ? 'green' : ''
-                }
-            }
-            // Статус ЭНП
-            if (colIdx.status >= 0) {
-                const el = cells[colIdx.status].querySelector('span')
-                if (el) {
-                    const txt = el.textContent.trim()
-                    if (visualEnabled && txt === 'Под охраной') {
-                        el.innerHTML = 'Охрана'
-                    }
-                    el.style.color = txt === 'Под охраной' || txt === 'Охрана' ? 'green' : txt === 'Сон' ? 'red' : ''
-                }
-            }
-            // Координаты: обрабатываем объединенный столбец "Широта/Долгота"
-            if (colIdx.latlon >= 0) {
-                const coordCell = cells[colIdx.latlon]
-                const latDiv = coordCell.querySelector('div[data-title="Широта"]')
-                const lonDiv = coordCell.querySelector('div[data-title="Долгота"]')
-
-                if (latDiv && lonDiv && visualEnabled) {
-                    const latSpan = latDiv.querySelector('span')
-                    const lonSpan = lonDiv.querySelector('span')
-
-                    if (latSpan && lonSpan) {
-                        const latText = latSpan.textContent.trim()
-                        const lonText = lonSpan.textContent.trim()
-
-                        const lat = parseFloat(latText.replace(',', '.'))
-                        const lon = parseFloat(lonText.replace(',', '.'))
-
-                        // Обрабатываем широту
-                        if (!isNaN(lat) && lat !== 0) {
-                            const latFormatted = lat.toFixed(5)
-                            latSpan.textContent = latFormatted.endsWith('.00000') ? latFormatted.slice(0, -4) : latFormatted
-                            latSpan.style.color = '#0066cc'
-                            latSpan.style.cursor = 'pointer'
-
-                            // Убираем отступы и делаем в одну строку
-                            latDiv.style.display = 'inline'
-                            latDiv.style.marginRight = '10px'
-
-                            // Добавляем обработчик клика для широты
-                            latSpan.onclick = () => {
-                                if (!isNaN(lon) && lon !== 0) {
-                                    const mapUrl = `https://www.google.com/maps/embed/v1/place?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&q=${lat},${lon}&zoom=15`
-                                    openMap(mapUrl)
-                                }
-                            }
-                        }
-
-                        // Обрабатываем долготу
-                        if (!isNaN(lon) && lon !== 0) {
-                            const lonFormatted = lon.toFixed(5)
-                            lonSpan.textContent = lonFormatted.endsWith('.00000') ? lonFormatted.slice(0, -4) : lonFormatted
-                            lonSpan.style.color = '#0066cc'
-                            lonSpan.style.cursor = 'pointer'
-
-                            // Убираем отступы и делаем в одну строку
-                            lonDiv.style.display = 'inline'
-
-                            // Добавляем обработчик клика для долготы
-                            lonSpan.onclick = () => {
-                                if (!isNaN(lat) && lat !== 0) {
-                                    const mapUrl = `https://www.google.com/maps/embed/v1/place?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&q=${lat},${lon}&zoom=15`
-                                    openMap(mapUrl)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        })
-
-        // Проверяем состояние кнопки и применяем его
-        const toggleBtn = document.getElementById('toggle-temp-btn')
-        if (toggleBtn && colIdx.temperature >= 0) {
-            const isVisible = toggleBtn.dataset.tempVisible === 'true'
-            const ths = table.querySelectorAll('thead th')
-            const rows = table.querySelectorAll('tbody tr')
-
-            if (isVisible) {
-                ths[colIdx.temperature].style.display = ''
-                rows.forEach((row) => {
-                    const tds = row.querySelectorAll('td')
-                    if (tds[colIdx.temperature]) tds[colIdx.temperature].style.display = ''
-                })
-            } else {
-                ths[colIdx.temperature].style.display = 'none'
-                rows.forEach((row) => {
-                    const tds = row.querySelectorAll('td')
-                    if (tds[colIdx.temperature]) tds[colIdx.temperature].style.display = 'none'
-                })
-            }
-        }
-
-        // Применяем стили к таблице при включенном визуале
-        if (visualEnabled) {
-            // Добавляем отступы для всех ячеек
-            table.querySelectorAll('td, th').forEach((cell) => {
-                cell.style.padding = '4px 12px'
-            })
-
-            // Увеличиваем отступ для столбца с координатами
-            if (colIdx.latlon >= 0) {
-                const coordCells = table.querySelectorAll(`td:nth-child(${colIdx.latlon + 1}), th:nth-child(${colIdx.latlon + 1})`)
-                coordCells.forEach((cell) => {
-                    cell.style.paddingRight = '75px' // Больше отступа справа от координат
-                })
-            }
-
-            // Увеличиваем отступ для столбца с валидностью (слева)
-            if (colIdx.valid >= 0) {
-                const validCells = table.querySelectorAll(`td:nth-child(${colIdx.valid + 1}), th:nth-child(${colIdx.valid + 1})`)
-                validCells.forEach((cell) => {
-                    cell.style.paddingLeft = '20px' // Больше отступа слева от валидности
-                })
-            }
         }
     }
 
-    // Функция для обновления отображения кнопки
-    const updateRefreshButton = () => {
-        const refreshBtn = document.getElementById('auto-refresh-btn')
-        if (!refreshBtn) return
+    // ========================================
+    // Менеджер кнопок
+    // ========================================
 
-        if (autoRefreshEnabled) {
-            refreshBtn.innerHTML = timeLeft
-            refreshBtn.style.fontSize = '12px'
-            refreshBtn.style.fontWeight = 'bold'
-        } else {
-            refreshBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M4.06189 13C4.02104 12.6724 4 12.3387 4 12C4 7.58172 7.58172 4 12 4C14.5006 4 16.7332 5.14727 18.2002 6.94416M19.9381 11C19.979 11.3276 20 11.6613 20 12C20 16.4183 16.4183 20 12 20C9.61061 20 7.46589 18.9525 6 17.2916M9 17H6V17.2916M18.2002 4V6.94416M18.2002 6.94416V6.99993L15.2002 7M6 17.2916V20H9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>`
-            refreshBtn.style.fontSize = '14px'
-            refreshBtn.style.fontWeight = 'normal'
-        }
-    }
-
-    // Функция для автообновления страницы
-    const setupAutoRefresh = () => {
-        // Очищаем существующие интервалы
-        if (autoRefreshInterval) {
-            clearInterval(autoRefreshInterval)
-            autoRefreshInterval = null
-        }
-        if (countdownInterval) {
-            clearInterval(countdownInterval)
-            countdownInterval = null
+    class ButtonManager {
+        constructor(state, autoRefreshManager) {
+            this.state = state
+            this.autoRefreshManager = autoRefreshManager
         }
 
-        if (autoRefreshEnabled) {
-            timeLeft = 50 // Сбрасываем счетчик
+        createButtons(tableType) {
+            if (!document.body) return
 
-            // Интервал для обновления страницы
-            autoRefreshInterval = setInterval(() => {
-                window.location.reload()
-            }, 50000) // 50000 мс = 50 секунд
+            // Удаляем кнопки, которые не должны отображаться на текущей странице
+            if (tableType !== 'telemetry' && tableType !== 'commands') {
+                this.removeButton('auto-refresh-btn')
+            }
 
-            // Интервал для отсчета времени
-            countdownInterval = setInterval(() => {
-                timeLeft--
-                updateRefreshButton()
+            if (tableType !== 'telemetry') {
+                this.removeButton('toggle-temp-btn')
+            }
 
-                if (timeLeft <= 0) {
-                    timeLeft = 50 // Сбрасываем для следующего цикла
-                }
-            }, 1000) // Обновляем каждую секунду
+            this.createVisualButton()
 
-            updateRefreshButton()
-        } else {
-            updateRefreshButton()
+            if (tableType === 'telemetry' || tableType === 'commands') {
+                this.createAutoRefreshButton()
+            }
+
+            if (tableType === 'telemetry') {
+                this.createTemperatureButton()
+            }
         }
-    }
 
-    // Функция для создания всех кнопок управления
-    const createControlButtons = () => {
-        const table = document.querySelector('.grid-table')
-        if (!table) return
+        removeButton(buttonId) {
+            const button = document.getElementById(buttonId)
+            if (button) {
+                button.remove()
+            }
+        }
 
-        // Проверяем, что body существует
-        if (!document.body) return
+        createVisualButton() {
+            if (document.getElementById('toggle-visual-btn')) return
 
-        const headers = Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent.trim())
-        const tempColIdx = headers.findIndex((h) => h.includes('Датчики температуры'))
-
-        // Создаем кнопку переключения визуала
-        if (!document.getElementById('toggle-visual-btn')) {
             const visualBtn = document.createElement('button')
             visualBtn.id = 'toggle-visual-btn'
-            // Устанавливаем текст и цвет в соответствии с текущим состоянием
-            visualBtn.textContent = visualEnabled ? 'Отключить' : 'Включить'
+            visualBtn.textContent = this.state.visualEnabled ? 'Отключить' : 'Включить'
             visualBtn.style.cssText = `
                 position: fixed;
                 top: 20px;
                 left: 20px;
-                background: ${visualEnabled ? '#dc3545' : '#28a745'};
+                background: ${this.state.visualEnabled ? '#dc3545' : '#28a745'};
                 color: white;
                 border: none;
                 border-radius: 5px;
@@ -553,129 +582,57 @@
             `
 
             visualBtn.addEventListener('click', () => {
-                visualEnabled = !visualEnabled
-                visualBtn.textContent = visualEnabled ? 'Отключить' : 'Включить'
-                visualBtn.style.background = visualEnabled ? '#dc3545' : '#28a745'
+                this.state.visualEnabled = !this.state.visualEnabled
+                visualBtn.textContent = this.state.visualEnabled ? 'Отключить' : 'Включить'
+                visualBtn.style.background = this.state.visualEnabled ? '#dc3545' : '#28a745'
 
-                // Получаем актуальную ссылку на таблицу
+                // Управление видимостью кнопки температуры
+                const tempBtn = document.getElementById('toggle-temp-btn')
+                if (tempBtn) {
+                    tempBtn.style.display = this.state.visualEnabled ? 'flex' : 'none'
+                }
+
+                // Управление кнопкой автообновления
+                const refreshBtn = document.getElementById('auto-refresh-btn')
+                if (refreshBtn) {
+                    if (!this.state.visualEnabled) {
+                        // Останавливаем и скрываем при отключении визуала
+                        this.autoRefreshManager.stop()
+                        refreshBtn.style.display = 'none'
+                    } else {
+                        // Показываем и запускаем при включении визуала
+                        refreshBtn.style.display = 'flex'
+                        if (!this.autoRefreshManager.enabled) {
+                            this.autoRefreshManager.start()
+                        }
+                    }
+                }
+
                 const currentTable = document.querySelector('.grid-table')
                 if (!currentTable) return
 
-                // Перезапускаем обработку таблицы
-                if (!visualEnabled) {
-                    // Сбрасываем цвет фона строк
-                    currentTable.querySelectorAll('tbody tr').forEach((row) => {
-                        row.style.backgroundColor = ''
-                    })
-
-                    // Сбрасываем все стили
-                    currentTable.querySelectorAll('td span, td div, td i').forEach((el) => {
-                        el.style.color = ''
-                        el.style.backgroundColor = ''
-                        el.style.borderRadius = ''
-                        el.style.padding = ''
-                        if (el.tagName.toLowerCase() === 'span') {
-                            if (el.innerHTML === '🟢' || el.innerHTML === '🔴') {
-                                el.innerHTML = el.innerHTML === '🟢' ? 'Валидная' : 'Невалидная'
-                                el.style.fontSize = ''
-                                el.style.textAlign = ''
-                            }
-                            // Возвращаем оригинальный текст статуса
-                            if (el.innerHTML === 'Охрана') {
-                                el.innerHTML = 'Под охраной'
-                            }
-                        }
-                    })
-
-                    // Сбрасываем стили координат
-                    currentTable.querySelectorAll('td span').forEach((span) => {
-                        span.style.cursor = ''
-                        span.removeEventListener('click', () => {}) // Убираем обработчики
-                    })
-
-                    // Сбрасываем стили таблицы
-                    currentTable.querySelectorAll('td, th').forEach((el) => {
-                        el.style.padding = ''
-                        el.style.paddingLeft = ''
-                        el.style.paddingRight = ''
-                        el.style.minWidth = ''
-                    })
-
-                    // Получаем актуальные заголовки для определения скрытых столбцов
-                    const currentHeaders = Array.from(currentTable.querySelectorAll('thead th')).map((th) => th.textContent.trim())
-                    const currentTempColIdx = currentHeaders.findIndex((h) => h.includes('Датчики температуры'))
-
-                    // Показываем скрытые столбцы
-                    const ths = currentTable.querySelectorAll('thead th')
-                    const rows = currentTable.querySelectorAll('tbody tr')
-                    const hideCols = [
-                        currentHeaders.findIndex((h) => h.includes('Ускорение')),
-                        currentHeaders.findIndex((h) => h.includes('Штырь извлечен')),
-                        currentTempColIdx,
-                    ].filter((idx) => idx >= 0)
-                    hideCols.forEach((idx) => {
-                        if (idx >= 0) {
-                            if (ths[idx]) ths[idx].style.display = ''
-                            rows.forEach((row) => {
-                                const tds = row.querySelectorAll('td')
-                                if (tds[idx]) tds[idx].style.display = ''
-                            })
-                        }
-                    })
-
-                    // Удаляем карту если она открыта
-                    const mapContainer = document.getElementById('coordinates-map')
-                    if (mapContainer) mapContainer.remove()
-
-                    // Скрываем кнопку датчиков температуры
-                    const tempBtn = document.getElementById('toggle-temp-btn')
-                    if (tempBtn) tempBtn.style.display = 'none'
-
-                    // Скрываем и отключаем кнопку автообновления
-                    const refreshBtn = document.getElementById('auto-refresh-btn')
-                    if (refreshBtn) {
-                        refreshBtn.style.display = 'none'
-                        // Отключаем автообновление
-                        if (autoRefreshEnabled) {
-                            autoRefreshEnabled = false
-                            setupAutoRefresh() // Это очистит интервалы
-                        }
-                    }
+                if (!this.state.visualEnabled) {
+                    this.resetTableStyles(currentTable)
                 } else {
-                    // Показываем кнопку датчиков температуры
-                    const tempBtn = document.getElementById('toggle-temp-btn')
-                    if (tempBtn) tempBtn.style.display = ''
-
-                    // Показываем и включаем кнопку автообновления (если она существует и мы на нужной странице)
-                    const refreshBtn = document.getElementById('auto-refresh-btn')
-                    if (refreshBtn && isAutoRefreshPage()) {
-                        refreshBtn.style.display = ''
-                        // Включаем автообновление обратно
-                        if (!autoRefreshEnabled) {
-                            autoRefreshEnabled = true
-                            refreshBtn.style.background = '#dc3545'
-                            refreshBtn.title = 'Отключить автообновление (50с)'
-                            setupAutoRefresh()
-                        }
-                    }
-
-                    processTable() // Применяем визуал заново
+                    // Перезапускаем обработку
+                    window.prettyENP && window.prettyENP.processCurrentTable()
                 }
             })
 
             document.body.appendChild(visualBtn)
         }
 
-        // Создаем кнопку автообновления только на страницах /devices/item/*/telemetry и /devices/item/*/commands
-        if (!document.getElementById('auto-refresh-btn') && isAutoRefreshPage()) {
+        createAutoRefreshButton() {
+            if (document.getElementById('auto-refresh-btn')) return
+
             const refreshBtn = document.createElement('button')
             refreshBtn.id = 'auto-refresh-btn'
-            refreshBtn.title = autoRefreshEnabled ? 'Отключить автообновление (50с)' : 'Включить автообновление (50с)'
+            refreshBtn.title = 'Отключить автообновление (50с)'
             refreshBtn.style.cssText = `
                 position: fixed;
                 top: 20px;
                 left: 150px;
-                background: ${autoRefreshEnabled ? '#dc3545' : '#28a745'};
+                background: #dc3545;
                 color: white;
                 border: none;
                 border-radius: 5px;
@@ -690,27 +647,27 @@
             `
 
             refreshBtn.addEventListener('click', () => {
-                autoRefreshEnabled = !autoRefreshEnabled
-                refreshBtn.style.background = autoRefreshEnabled ? '#dc3545' : '#28a745'
-                refreshBtn.title = autoRefreshEnabled ? 'Отключить автообновление (50с)' : 'Включить автообновление (50с)'
-                setupAutoRefresh()
+                this.autoRefreshManager.toggle()
             })
 
             document.body.appendChild(refreshBtn)
-
-            // Запускаем автообновление сразу, если оно включено
-            if (autoRefreshEnabled) {
-                setupAutoRefresh()
-            } else {
-                updateRefreshButton()
-            }
+            this.autoRefreshManager.start()
         }
 
-        // Создаем кнопку датчиков температуры
-        if (tempColIdx >= 0 && !document.getElementById('toggle-temp-btn')) {
+        createTemperatureButton() {
+            const table = document.querySelector('.grid-table')
+            if (!table) return
+
+            const detector = new TableDetector()
+            const headers = detector.getHeaders(table)
+            const tempColIdx = headers.findIndex((h) => h.includes('Датчики температуры'))
+
+            if (tempColIdx < 0 || document.getElementById('toggle-temp-btn')) return
+
             const toggleBtn = document.createElement('button')
             toggleBtn.id = 'toggle-temp-btn'
-            toggleBtn.textContent = 'Показать датчики температуры'
+            toggleBtn.textContent = 'Показать все датчики температуры'
+            toggleBtn.dataset.tempVisible = 'false'
             toggleBtn.style.cssText = `
                 position: fixed;
                 top: 20px;
@@ -723,126 +680,352 @@
                 cursor: pointer;
                 z-index: 1000;
                 font-size: 14px;
+                display: ${this.state.visualEnabled ? 'flex' : 'none'};
+                align-items: center;
+                justify-content: center;
             `
 
             toggleBtn.addEventListener('click', () => {
-                const ths = table.querySelectorAll('thead th')
-                const rows = table.querySelectorAll('tbody tr')
-                const isVisible = ths[tempColIdx].style.display !== 'none'
+                const currentTable = document.querySelector('.grid-table')
+                if (!currentTable) return
 
-                if (isVisible) {
-                    // Скрываем
-                    ths[tempColIdx].style.display = 'none'
+                const rows = currentTable.querySelectorAll('tbody tr')
+                const showingSimplified = toggleBtn.dataset.tempVisible !== 'true'
+
+                if (showingSimplified) {
                     rows.forEach((row) => {
                         const tds = row.querySelectorAll('td')
-                        if (tds[tempColIdx]) tds[tempColIdx].style.display = 'none'
+                        if (tds[tempColIdx]) {
+                            const tempCell = tds[tempColIdx]
+                            if (tempCell.dataset.originalContent) {
+                                tempCell.innerHTML = tempCell.dataset.originalContent
+                                tempCell.dataset.processed = 'false'
+                            }
+                        }
                     })
-                    toggleBtn.textContent = 'Показать датчики температуры'
-                    toggleBtn.dataset.tempVisible = 'false'
-                } else {
-                    // Показываем
-                    ths[tempColIdx].style.display = ''
-                    rows.forEach((row) => {
-                        const tds = row.querySelectorAll('td')
-                        if (tds[tempColIdx]) tds[tempColIdx].style.display = ''
-                    })
-                    toggleBtn.textContent = 'Скрыть датчики температуры'
+                    toggleBtn.textContent = 'Упростить датчики температуры'
                     toggleBtn.dataset.tempVisible = 'true'
+                } else {
+                    rows.forEach((row) => {
+                        const tds = row.querySelectorAll('td')
+                        if (tds[tempColIdx]) {
+                            tds[tempColIdx].dataset.processed = 'false'
+                        }
+                    })
+                    toggleBtn.textContent = 'Показать все датчики температуры'
+                    toggleBtn.dataset.tempVisible = 'false'
+
+                    if (this.state.visualEnabled) {
+                        setTimeout(() => window.prettyENP && window.prettyENP.processCurrentTable(), 50)
+                    }
                 }
             })
 
             document.body.appendChild(toggleBtn)
         }
-    }
 
-    // Функция для надежной инициализации
-    const initializeScript = () => {
-        // Проверяем готовность страницы
-        if (!document.body || !document.querySelector('.grid-table')) {
-            return false
-        }
+        resetTableStyles(table) {
+            // Восстанавливаем температуру
+            table.querySelectorAll('td[data-original-content]').forEach((cell) => {
+                cell.innerHTML = cell.dataset.originalContent
+                delete cell.dataset.originalContent
+                delete cell.dataset.processed
+            })
 
-        createControlButtons()
-        processTable()
-        makeSerialNumberClickable()
-        return true
-    }
+            // Сбрасываем фон строк
+            table.querySelectorAll('tbody tr').forEach((row) => {
+                row.style.backgroundColor = ''
+            })
 
-    // Множественные попытки инициализации для надежности
-    document.addEventListener('DOMContentLoaded', initializeScript)
+            // Сбрасываем стили ячеек
+            table.querySelectorAll('td span, td div, td i').forEach((el) => {
+                el.style.color = ''
+                el.style.backgroundColor = ''
+                el.style.borderRadius = ''
+                el.style.padding = ''
 
-    // Дополнительные попытки с разными интервалами
-    setTimeout(() => {
-        if (!initializeScript()) {
-            setTimeout(initializeScript, 200)
-        }
-    }, 100)
-
-    setTimeout(() => {
-        if (!initializeScript()) {
-            setTimeout(initializeScript, 300)
-        }
-    }, 500)
-
-    setTimeout(initializeScript, 1000)
-    setTimeout(initializeScript, 2000)
-
-    // MutationObserver для отслеживания изменений DOM
-    const observer = new MutationObserver((mutations) => {
-        let shouldInit = false
-        mutations.forEach((mutation) => {
-            if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                // Проверяем, добавилась ли таблица или важные элементы
-                mutation.addedNodes.forEach((node) => {
-                    if (node.nodeType === 1 && (node.classList?.contains('grid-table') || node.querySelector?.('.grid-table'))) {
-                        shouldInit = true
+                if (el.tagName.toLowerCase() === 'span') {
+                    if (el.innerHTML === '🟢' || el.innerHTML === '🔴') {
+                        el.innerHTML = el.innerHTML === '🟢' ? 'Валидная' : 'Невалидная'
+                        el.style.fontSize = ''
+                        el.style.textAlign = ''
                     }
+                    if (el.innerHTML === 'Охрана') {
+                        el.innerHTML = 'Под охраной'
+                    }
+                }
+            })
+
+            // Сбрасываем координаты
+            table.querySelectorAll('td span').forEach((span) => {
+                span.style.cursor = ''
+                span.onclick = null
+            })
+
+            // Сбрасываем padding
+            table.querySelectorAll('td, th').forEach((el) => {
+                el.style.padding = ''
+                el.style.paddingLeft = ''
+                el.style.paddingRight = ''
+                el.style.minWidth = ''
+            })
+
+            // Показываем скрытые столбцы
+            const detector = new TableDetector()
+            const headers = detector.getHeaders(table)
+            const ths = table.querySelectorAll('thead th')
+            const rows = table.querySelectorAll('tbody tr')
+            const hideCols = [headers.findIndex((h) => h.includes('Ускорение')), headers.findIndex((h) => h.includes('Штырь извлечен'))].filter(
+                (idx) => idx >= 0
+            )
+
+            hideCols.forEach((idx) => {
+                if (ths[idx]) ths[idx].style.display = ''
+                rows.forEach((row) => {
+                    const tds = row.querySelectorAll('td')
+                    if (tds[idx]) tds[idx].style.display = ''
                 })
+            })
+
+            // Удаляем карту
+            const mapContainer = document.getElementById('coordinates-map')
+            if (mapContainer) mapContainer.remove()
+
+            // Скрываем автообновление
+            const refreshBtn = document.getElementById('auto-refresh-btn')
+            if (refreshBtn) {
+                refreshBtn.style.display = 'none'
+                this.autoRefreshManager.stop()
+            }
+        }
+    }
+
+    // ========================================
+    // Менеджер автообновления
+    // ========================================
+
+    class AutoRefreshManager {
+        constructor(state) {
+            this.state = state
+            this.enabled = true
+            this.paused = false
+            this.interval = null
+            this.timeLeft = 50
+        }
+
+        start() {
+            this.stop()
+            this.enabled = true
+            this.timeLeft = 50
+
+            this.interval = setInterval(() => {
+                if (!this.paused) {
+                    this.timeLeft--
+                    if (this.timeLeft <= 0) {
+                        window.location.reload()
+                        return
+                    }
+                }
+                this.updateButton()
+            }, 1000)
+
+            this.updateButton()
+        }
+
+        stop() {
+            if (this.interval) {
+                clearInterval(this.interval)
+                this.interval = null
+            }
+            this.enabled = false
+            this.updateButton()
+        }
+
+        toggle() {
+            if (this.enabled) {
+                this.stop()
+            } else {
+                this.start()
+            }
+        }
+
+        pause() {
+            this.paused = true
+            this.updateButton()
+        }
+
+        resume() {
+            this.paused = false
+            this.updateButton()
+        }
+
+        updateButton() {
+            const refreshBtn = document.getElementById('auto-refresh-btn')
+            if (!refreshBtn) return
+
+            if (this.paused) {
+                refreshBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M10 4H6V20H10V4Z" fill="currentColor"/>
+<path d="M18 4H14V20H18V4Z" fill="currentColor"/>
+</svg>`
+                refreshBtn.style.background = '#ff9800'
+                refreshBtn.title = 'Автообновление на паузе (активен ввод текста)'
+            } else if (this.enabled) {
+                refreshBtn.innerHTML = this.timeLeft
+                refreshBtn.style.background = '#dc3545'
+                refreshBtn.title = 'Отключить автообновление (50с)'
+            } else {
+                refreshBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M4.06189 13C4.02104 12.6724 4 12.3387 4 12C4 7.58172 7.58172 4 12 4C14.5006 4 16.7332 5.14727 18.2002 6.94416M19.9381 11C19.979 11.3276 20 11.6613 20 12C20 16.4183 16.4183 20 12 20C9.61061 20 7.46589 18.9525 6 17.2916M9 17H6V17.2916M18.2002 4V6.94416M18.2002 6.94416V6.99993L15.2002 7M6 17.2916V20H9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`
+                refreshBtn.style.background = '#28a745'
+                refreshBtn.title = 'Включить автообновление (50с)'
+            }
+        }
+    }
+
+    // ========================================
+    // Дополнительные функции
+    // ========================================
+
+    function makeSerialNumberClickable() {
+        const subtitle = document.querySelector('.page-h1__subtitle')
+        if (!subtitle) return
+
+        const text = subtitle.textContent
+        const snMatch = text.match(/Серийный номер: (\d+)/)
+        if (!snMatch) return
+
+        const serialNumber = snMatch[1]
+        const now = new Date()
+        const startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        const endDate = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+
+        const url = `http://oper.crcp.ru/vyg21.php?sn=${serialNumber}&sdt=1&d1=${Utils.formatDate(startDate)}&d2=${Utils.formatDate(endDate)}`
+
+        const originalHTML = subtitle.innerHTML
+        const newHTML = originalHTML.replace(
+            /(Серийный номер: )(\d+)/,
+            `$1<a href="#" style="text-decoration: underline; color: #0066cc; cursor: pointer;">$2</a>`
+        )
+
+        subtitle.innerHTML = newHTML
+
+        const link = subtitle.querySelector('a')
+        if (link) {
+            link.addEventListener('click', (e) => {
+                e.preventDefault()
+                window.open(url, '_blank')
+            })
+        }
+    }
+
+    function setupInputMonitoring(autoRefreshManager) {
+        document.addEventListener('focusin', (e) => {
+            if (e.target.matches('input, textarea, select, [contenteditable="true"]')) {
+                autoRefreshManager.pause()
             }
         })
 
-        if (shouldInit) {
-            setTimeout(initializeScript, 100)
-        }
-    })
-
-    // Начинаем наблюдение
-    if (document.body) {
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
+        document.addEventListener('focusout', (e) => {
+            if (e.target.matches('input, textarea, select, [contenteditable="true"]')) {
+                autoRefreshManager.resume()
+            }
         })
-    } else {
-        // Если body еще нет, ждем его появления
-        const bodyObserver = new MutationObserver(() => {
+    }
+
+    // ========================================
+    // Главный контроллер
+    // ========================================
+
+    class PrettyENP {
+        constructor() {
+            this.state = { visualEnabled: true }
+            this.detector = new TableDetector()
+            this.autoRefreshManager = new AutoRefreshManager(this.state)
+            this.buttonManager = new ButtonManager(this.state, this.autoRefreshManager)
+            this.currentTableType = null
+
+            this.telemetryProcessor = new TelemetryProcessor(this.state)
+            this.commandsProcessor = new CommandsProcessor(this.state)
+
+            this.init()
+        }
+
+        init() {
+            setupInputMonitoring(this.autoRefreshManager)
+            this.setupObserver()
+            this.processCurrentTable()
+        }
+
+        setupObserver() {
+            const observer = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                        for (const node of mutation.addedNodes) {
+                            if (node.nodeType === 1 && (node.classList?.contains('grid-table') || node.querySelector?.('.grid-table'))) {
+                                setTimeout(() => this.processCurrentTable(), 100)
+                                return
+                            }
+                        }
+                    }
+                }
+            })
+
             if (document.body) {
-                bodyObserver.disconnect()
                 observer.observe(document.body, {
                     childList: true,
                     subtree: true,
                 })
-                initializeScript()
+            } else {
+                const waitForBody = () => {
+                    if (document.body) {
+                        observer.observe(document.body, {
+                            childList: true,
+                            subtree: true,
+                        })
+                        this.processCurrentTable()
+                    } else {
+                        setTimeout(waitForBody, 100)
+                    }
+                }
+                waitForBody()
             }
-        })
-        bodyObserver.observe(document.documentElement, {
-            childList: true,
-        })
+        }
+
+        processCurrentTable() {
+            const table = document.querySelector('.grid-table')
+            if (!table || !this.state.visualEnabled) return
+
+            const tableType = this.detector.detect(table)
+
+            // Создаем кнопки если тип изменился или кнопок нет
+            if (tableType !== this.currentTableType || !document.getElementById('toggle-visual-btn')) {
+                this.currentTableType = tableType
+                this.buttonManager.createButtons(tableType)
+            }
+
+            // Обрабатываем таблицу
+            if (tableType === 'telemetry') {
+                this.telemetryProcessor.process(table)
+            } else if (tableType === 'commands') {
+                this.commandsProcessor.process(table)
+            }
+
+            // Обрабатываем серийный номер
+            makeSerialNumberClickable()
+        }
     }
 
-    // Возвращаем интервал вместо MutationObserver
-    const intervalId = setInterval(() => {
-        // Применяем обработку таблицы только если визуал включен
-        if (visualEnabled) {
-            processTable()
-        }
+    // ========================================
+    // Запуск
+    // ========================================
 
-        // Проверяем и пересоздаем кнопки если они пропали
-        const missingVisualBtn = !document.getElementById('toggle-visual-btn')
-        const missingRefreshBtn = isAutoRefreshPage() && !document.getElementById('auto-refresh-btn')
-        const missingTempBtn = !document.getElementById('toggle-temp-btn')
-
-        if (missingVisualBtn || missingRefreshBtn || missingTempBtn) {
-            createControlButtons()
-        }
-    }, 200)
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            window.prettyENP = new PrettyENP()
+        })
+    } else {
+        window.prettyENP = new PrettyENP()
+    }
 })()
