@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.0.5
+// @version      2.0.6
 // @description  Раздел с телеметрией ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -960,12 +960,40 @@
         }
 
         setupObserver() {
+            this.tableObserver = null
+            let processTimeout = null
+
+            const debouncedProcess = () => {
+                if (processTimeout) clearTimeout(processTimeout)
+                processTimeout = setTimeout(() => this.processCurrentTable(), 100)
+            }
+
+            const setupTableObserver = (table) => {
+                if (this.tableObserver) {
+                    this.tableObserver.disconnect()
+                }
+
+                const tbody = table.querySelector('tbody')
+                if (!tbody) return
+
+                this.tableObserver = new MutationObserver(() => {
+                    debouncedProcess()
+                })
+
+                this.tableObserver.observe(tbody, {
+                    childList: true,
+                    subtree: true,
+                })
+            }
+
             const observer = new MutationObserver((mutations) => {
                 for (const mutation of mutations) {
                     if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
                         for (const node of mutation.addedNodes) {
                             if (node.nodeType === 1 && (node.classList?.contains('grid-table') || node.querySelector?.('.grid-table'))) {
-                                setTimeout(() => this.processCurrentTable(), 100)
+                                const table = node.classList?.contains('grid-table') ? node : node.querySelector('.grid-table')
+                                if (table) setupTableObserver(table)
+                                debouncedProcess()
                                 return
                             }
                         }
@@ -973,19 +1001,26 @@
                 }
             })
 
-            if (document.body) {
+            const startObserving = () => {
                 observer.observe(document.body, {
                     childList: true,
                     subtree: true,
                 })
+
+                const existingTable = document.querySelector('.grid-table')
+                if (existingTable) {
+                    setupTableObserver(existingTable)
+                }
+
+                this.processCurrentTable()
+            }
+
+            if (document.body) {
+                startObserving()
             } else {
                 const waitForBody = () => {
                     if (document.body) {
-                        observer.observe(document.body, {
-                            childList: true,
-                            subtree: true,
-                        })
-                        this.processCurrentTable()
+                        startObserving()
                     } else {
                         setTimeout(waitForBody, 100)
                     }
