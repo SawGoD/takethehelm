@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.0.6
+// @version      2.0.7
 // @description  Раздел с телеметрией ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -51,9 +51,9 @@
         getCommandStatusColor(statusText) {
             if (!statusText) return ''
             const text = statusText.toLowerCase()
+            if (text.includes('отменена')) return 'rgba(255, 99, 71, 0.3)'
             if (text.includes('выполнена')) return 'rgba(144, 238, 144, 0.4)'
             if (text.includes('ожидает') || text.includes('связ')) return 'rgba(255, 165, 0, 0.3)'
-            if (text.includes('отменена')) return 'rgba(255, 99, 71, 0.3)'
             return ''
         },
 
@@ -499,9 +499,7 @@
                     if (dateCell) {
                         const dateStr = dateCell.textContent.trim()
                         const backgroundColor = Utils.getRowColorByTime(dateStr, true)
-                        if (backgroundColor) {
-                            row.style.backgroundColor = backgroundColor
-                        }
+                        row.style.backgroundColor = backgroundColor
                     }
                 }
 
