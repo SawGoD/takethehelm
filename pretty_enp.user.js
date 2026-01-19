@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.0.4
+// @version      2.0.5
 // @description  Раздел с телеметрией ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -318,8 +318,9 @@
             if (!alreadyProcessed) {
                 const innerSensorDiv = tempCell.querySelector('div[data-title="Внутренний датчик"]')
                 if (innerSensorDiv) {
-                    const tempValue = innerSensorDiv.textContent.match(/[-−]?\d+/)?.[0]
-                    if (tempValue) {
+                    const tempMatch = innerSensorDiv.textContent.match(/[-−]?\d+\.?\d*/)?.[0]
+                    if (tempMatch) {
+                        const tempValue = Math.round(parseFloat(tempMatch.replace('−', '-')) * 100)
                         if (!tempCell.dataset.originalContent) {
                             tempCell.dataset.originalContent = tempCell.innerHTML
                         }
