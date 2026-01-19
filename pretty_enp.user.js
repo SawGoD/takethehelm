@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.0.7
+// @version      2.0.8
 // @description  Раздел с телеметрией ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -320,7 +320,8 @@
                 if (innerSensorDiv) {
                     const tempMatch = innerSensorDiv.textContent.match(/[-−]?\d+\.?\d*/)?.[0]
                     if (tempMatch) {
-                        const tempValue = Math.round(parseFloat(tempMatch.replace('−', '-')) * 100)
+                        const rawValue = parseFloat(tempMatch.replace('−', '-'))
+                        const tempValue = Math.round(Math.abs(rawValue) < 1 ? rawValue * 100 : rawValue)
                         if (!tempCell.dataset.originalContent) {
                             tempCell.dataset.originalContent = tempCell.innerHTML
                         }
