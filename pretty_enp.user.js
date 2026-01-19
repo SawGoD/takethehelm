@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.0.8
+// @version      2.0.9
 // @description  Раздел с телеметрией ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -313,33 +313,32 @@
 
             const tempBtn = document.getElementById('toggle-temp-btn')
             const showAllSensors = tempBtn && tempBtn.dataset.tempVisible === 'true'
-            const alreadyProcessed = tempCell.dataset.processed === 'true'
 
-            if (!alreadyProcessed) {
-                const innerSensorDiv = tempCell.querySelector('div[data-title="Внутренний датчик"]')
-                if (innerSensorDiv) {
-                    const tempMatch = innerSensorDiv.textContent.match(/[-−]?\d+\.?\d*/)?.[0]
-                    if (tempMatch) {
-                        const rawValue = parseFloat(tempMatch.replace('−', '-'))
-                        const tempValue = Math.round(Math.abs(rawValue) < 1 ? rawValue * 100 : rawValue)
-                        if (!tempCell.dataset.originalContent) {
-                            tempCell.dataset.originalContent = tempCell.innerHTML
-                        }
+            const innerSensorDiv = tempCell.querySelector('div[data-title="Внутренний датчик"]')
+            if (!innerSensorDiv) return
 
-                        if (!showAllSensors) {
-                            const simplifiedDiv = document.createElement('div')
-                            simplifiedDiv.className = 'el-tooltip bold simplified-temp'
-                            simplifiedDiv.style.cssText = 'padding: 4px 8px;'
-                            simplifiedDiv.textContent = `${tempValue}°`
+            const tempMatch = innerSensorDiv.textContent.match(/[-−]?\d+\.?\d*/)?.[0]
+            if (!tempMatch) return
 
-                            tempCell.innerHTML = ''
-                            tempCell.appendChild(simplifiedDiv)
-                        }
+            const rawValue = parseFloat(tempMatch.replace('−', '-'))
+            const tempValue = Math.round(Math.abs(rawValue) < 1 ? rawValue * 100 : rawValue)
 
-                        tempCell.dataset.processed = 'true'
-                    }
-                }
+            // Скрываем все оригинальные div-ы вместо удаления
+            const allDivs = tempCell.querySelectorAll(':scope > div:not(.simplified-temp)')
+            allDivs.forEach(div => div.style.display = showAllSensors ? '' : 'none')
+
+            // Находим или создаём simplified-temp
+            let simplifiedDiv = tempCell.querySelector('.simplified-temp')
+            if (!simplifiedDiv) {
+                simplifiedDiv = document.createElement('div')
+                simplifiedDiv.className = 'el-tooltip bold simplified-temp'
+                simplifiedDiv.style.cssText = 'padding: 4px 8px;'
+                tempCell.appendChild(simplifiedDiv)
             }
+
+            // Обновляем значение и видимость
+            simplifiedDiv.textContent = `${tempValue}°`
+            simplifiedDiv.style.display = showAllSensors ? 'none' : ''
         }
 
         processCoordinates(cells, colIdx) {
@@ -982,7 +981,17 @@
                 this.tableObserver.observe(tbody, {
                     childList: true,
                     subtree: true,
+                    characterData: true,
                 })
+            }
+
+            const setupPaginationListener = () => {
+                document.addEventListener('click', (e) => {
+                    const pagination = e.target.closest('.el-pagination, .el-pager, .el-select-dropdown__item, .btn-prev, .btn-next')
+                    if (pagination) {
+                        setTimeout(() => debouncedProcess(), 50)
+                    }
+                }, true)
             }
 
             const observer = new MutationObserver((mutations) => {
@@ -1011,6 +1020,7 @@
                     setupTableObserver(existingTable)
                 }
 
+                setupPaginationListener()
                 this.processCurrentTable()
             }
 
