@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      2.1.0
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
@@ -12,6 +12,11 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.1.0
+//   refactor: анализ АКБ (штатно/аномально) переделан из чекбоксов в radio button
+//   feat: поддержка showIfValue для зависимости полей от значения radio
+//   feat: radio триггерит пересчёт видимости зависимых полей
 //
 // 2.0.0
 //   feat: разделение категорий по типу регуляции ПП1877 / Д7
@@ -786,20 +791,13 @@
                             halfWidth: true,
                         },
                         {
-                            id: 'analysisNormal',
-                            type: 'checkbox',
-                            label: 'АКБ работает штатно',
-                            default: false,
-                            halfWidth: true,
-                            hideIf: 'analysisAnomalous',
-                        },
-                        {
-                            id: 'analysisAnomalous',
-                            type: 'checkbox',
-                            label: 'Аномальное поведение АКБ',
-                            default: false,
-                            halfWidth: true,
-                            hideIf: 'analysisNormal',
+                            id: 'analysisType',
+                            type: 'radio',
+                            label: 'Анализ',
+                            options: [
+                                { value: 'normal', label: 'АКБ работает штатно' },
+                                { value: 'anomalous', label: 'Аномальное поведение АКБ' },
+                            ],
                         },
                         {
                             id: 'analysisConstantConnection',
@@ -807,7 +805,7 @@
                             label: 'Постоянный выход на связь',
                             default: false,
                             halfWidth: true,
-                            showIf: 'analysisNormal',
+                            showIfValue: { field: 'analysisType', value: 'normal' },
                         },
                         {
                             id: 'analysisAlarm',
@@ -823,7 +821,7 @@
                             label: 'Разряд не линейно',
                             default: false,
                             halfWidth: true,
-                            showIf: 'analysisAnomalous',
+                            showIfValue: { field: 'analysisType', value: 'anomalous' },
                         },
                         {
                             id: 'analysisTemperature',
@@ -831,7 +829,7 @@
                             label: 'Температура в телеметрии',
                             halfWidth: true,
                             placeholder: 'например: -31',
-                            showIf: 'analysisAnomalous',
+                            showIfValue: { field: 'analysisType', value: 'anomalous' },
                         },
                         {
                             id: 'additionalNote',
@@ -868,14 +866,14 @@
                         }
 
                         const analysisParts = []
-                        if (fields.analysisNormal) {
+                        if (fields.analysisType === 'normal') {
                             analysisParts.push('АКБ работает штатно')
+                            if (fields.analysisConstantConnection) {
+                                const alarm = fields.analysisAlarm ? ' в статусе "Тревога"' : ''
+                                analysisParts.push(`Разряд АКБ связан с постоянным выходом пломбы на связь${alarm}`)
+                            }
                         }
-                        if (fields.analysisConstantConnection) {
-                            const alarm = fields.analysisAlarm ? ' в статусе "Тревога"' : ''
-                            analysisParts.push(`Разряд АКБ связан с постоянным выходом пломбы на связь${alarm}`)
-                        }
-                        if (fields.analysisAnomalous) {
+                        if (fields.analysisType === 'anomalous') {
                             analysisParts.push('Аномальное поведение АКБ')
                         }
                         if (fields.analysisNonLinear) {
@@ -2469,6 +2467,10 @@
         isFieldHidden(field) {
             let hidden = false
             if (field.showIf && !this.fieldValues[field.showIf]) hidden = true
+            if (field.showIfValue) {
+                const { field: f, value: v } = field.showIfValue
+                hidden = this.fieldValues[f] !== v
+            }
             if (field.hideIf && this.fieldValues[field.hideIf]) hidden = true
             if (field.hideIfAny && field.hideIfAny.some(id => this.fieldValues[id])) hidden = true
             if (field.hideIfAll && field.hideIfAll.every(id => this.fieldValues[id])) hidden = true
@@ -2524,7 +2526,7 @@
                 }
 
                 // Показ/скрытие зависимых полей и очистка скрытых
-                if (field.type === 'checkbox') {
+                if (field.type === 'checkbox' || field.type === 'radio') {
                     template.fields.forEach((f) => {
                         if (f.showIfTransport && f.showIfTransport !== pageData.transportType) return
                         if (f.showIfStatus && f.showIfStatus !== pageData.transportStatus) return
