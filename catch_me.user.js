@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.6.2
+// @version      2.6.3
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
@@ -12,6 +12,9 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.6.3
+//   feat: необязательное поле "Температура в телеметрии" для согласованного срезания
 //
 // 2.6.2
 //   style: disabled-стиль для cm-btn-secondary (цвет, курсор, прозрачность)
@@ -1095,6 +1098,12 @@
                             required: true,
                             minLength: 6,
                         },
+                        {
+                            id: 'telemetryTemperature',
+                            type: 'text',
+                            label: 'Температура в телеметрии',
+                            placeholder: 'например -24',
+                        },
                     ],
 
                     generate(data, fields) {
@@ -1146,6 +1155,7 @@
                             isBts ? `Срезание согласовано с РБ.` : null,
                             (fields.actions || '').trim() || isBts ? `` : null,
                             `Последний выход на связь: ${lastConnStr}`,
+                            /\d/.test(fields.telemetryTemperature || '') ? `Температура в последней телеметрии: ${fields.telemetryTemperature.trim()}°` : null,
                             ``,
                             `${sealLabel} ${data.sealNumber} была срезана`,
                         ].filter(line => line !== null).join('\n')
