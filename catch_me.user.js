@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
+// @version      2.2.2
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
@@ -12,6 +12,17 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.2.2
+//   fix: принудительное ограничение ввода min/max для number полей через JS
+//
+// 2.2.1
+//   fix: заряд АКБ ограничен 0-100 во всех шаблонах (ПП1877 и Д7)
+//   feat: поддержка min/max атрибутов для number полей
+//
+// 2.2.0
+//   feat: превью сообщения отображается справа от формы (side-by-side layout)
+//   style: модалка расширена до 960px, превью sticky с прокруткой
 //
 // 2.1.0
 //   refactor: анализ АКБ (штатно/аномально) переделан из чекбоксов в radio button
@@ -524,6 +535,8 @@
                             label: 'Заряд АКБ (%)',
                             placeholder: 'Например: 25',
                             required: true,
+                            min: 0,
+                            max: 100,
                         },
                         {
                             id: 'distance',
@@ -733,6 +746,8 @@
                             placeholder: 'Например: 12',
                             required: true,
                             halfWidth: true,
+                            min: 0,
+                            max: 100,
                         },
                         {
                             id: 'startBatteryLevel',
@@ -741,6 +756,8 @@
                             placeholder: 'Например: 95',
                             required: true,
                             halfWidth: true,
+                            min: 0,
+                            max: 100,
                         },
                         {
                             id: 'activationDate',
@@ -1428,6 +1445,11 @@
                     width: 90%;
                     max-height: 85vh;
                     overflow-y: auto;
+                    transition: max-width 0.2s;
+                }
+
+                .cm-modal-wide {
+                    max-width: 960px;
                 }
 
                 .cm-header {
@@ -1797,8 +1819,26 @@
                     font-weight: 700;
                 }
 
+                .cm-form-preview-wrap {
+                    display: flex;
+                    gap: 20px;
+                }
+
+                .cm-form-preview-wrap > .cm-form-side {
+                    flex: 1;
+                    min-width: 0;
+                }
+
+                .cm-form-preview-wrap > .cm-preview-side {
+                    flex: 1;
+                    min-width: 0;
+                    position: sticky;
+                    top: 0;
+                    align-self: flex-start;
+                }
+
                 .cm-preview {
-                    margin-top: 16px;
+                    margin-top: 0;
                 }
 
                 .cm-preview-text {
@@ -1806,12 +1846,14 @@
                     border-left: 4px solid #1890ff;
                     border-radius: 0 4px 4px 0;
                     padding: 12px 16px;
-                    font-size: 14px;
-                    line-height: 1.7;
+                    font-size: 13px;
+                    line-height: 1.6;
                     white-space: pre-wrap;
                     word-break: break-word;
                     font-style: italic;
                     color: #333;
+                    max-height: 60vh;
+                    overflow-y: auto;
                 }
 
                 .cm-preview-title {
@@ -2134,6 +2176,7 @@
                 showBack: true,
                 body: this.renderForm(template, pageData),
                 footer: this.renderFormFooter(template),
+                wide: true,
             })
 
             this.updatePreview()
@@ -2181,16 +2224,20 @@
                     `}
                 </div>
 
-                <form id="cm-form">
-                    ${this.renderFields(template.fields, pageData)}
-                </form>
-
-                <div class="cm-preview">
-                    <div class="cm-preview-title">Предпросмотр сообщения</div>
-                    <div id="cm-preview-text" class="cm-preview-text"></div>
+                <div class="cm-form-preview-wrap">
+                    <div class="cm-form-side">
+                        <form id="cm-form">
+                            ${this.renderFields(template.fields, pageData)}
+                        </form>
+                        ${hasRelated ? this.renderRelatedSection(template) : ''}
+                    </div>
+                    <div class="cm-preview-side">
+                        <div class="cm-preview">
+                            <div class="cm-preview-title">Предпросмотр сообщения</div>
+                            <div id="cm-preview-text" class="cm-preview-text"></div>
+                        </div>
+                    </div>
                 </div>
-
-                ${hasRelated ? this.renderRelatedSection(template) : ''}
             `
         }
 
@@ -2233,6 +2280,8 @@
                                             id="field-${field.id}"
                                             placeholder="${field.placeholder || ''}"
                                             ${datalistAttr}
+                                            ${field.min !== undefined ? `min="${field.min}"` : ''}
+                                            ${field.max !== undefined ? `max="${field.max}"` : ''}
                                             ${field.required ? 'required' : ''}>
                                         ${clearBtn}
                                     </div>
@@ -2351,7 +2400,7 @@
 
         // ========== Общие методы ==========
 
-        createModal({ title, subtitle, showBack, body, footer }) {
+        createModal({ title, subtitle, showBack, body, footer, wide }) {
             if (this.overlay) {
                 this.overlay.remove()
             }
@@ -2363,7 +2412,7 @@
             })
 
             this.container = document.createElement('div')
-            this.container.className = 'cm-modal'
+            this.container.className = `cm-modal${wide ? ' cm-modal-wide' : ''}`
             this.container.innerHTML = `
                 <div class="cm-header">
                     <div>
@@ -2421,6 +2470,16 @@
             this.container.querySelectorAll('input:not(#cm-search), textarea, select').forEach((input) => {
                 input.addEventListener('input', () => this.updatePreview())
                 input.addEventListener('change', () => this.updatePreview())
+            })
+
+            // Ограничение min/max для number полей
+            this.container.querySelectorAll('input[type="number"][max], input[type="number"][min]').forEach((input) => {
+                input.addEventListener('input', () => {
+                    if (input.value === '') return
+                    const val = Number(input.value)
+                    if (input.max !== '' && val > Number(input.max)) input.value = input.max
+                    if (input.min !== '' && val < Number(input.min)) input.value = input.min
+                })
             })
 
             // Кнопки очистки для полей с datalist
