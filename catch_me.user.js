@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.2.2
+// @version      2.3.0
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
@@ -12,6 +12,10 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.3.0
+//   style: анимация сворачивания модалки к кнопке (scale + translate + fade)
+//   style: анимация разворачивания из кнопки обратно в центр
 //
 // 2.2.2
 //   fix: принудительное ограничение ввода min/max для number полей через JS
@@ -1435,6 +1439,33 @@
                     display: flex;
                     align-items: center;
                     justify-content: center;
+                    transition: opacity 0.3s;
+                }
+
+                .cm-overlay.cm-minimizing {
+                    opacity: 0;
+                    pointer-events: none;
+                }
+
+                .cm-modal.cm-minimizing {
+                    transition: transform 0.3s ease-in, opacity 0.3s ease-in;
+                    transform: scale(0.15) translate(80vw, 60vh);
+                    opacity: 0;
+                }
+
+                .cm-modal.cm-restoring {
+                    animation: cm-restore 0.3s ease-out;
+                }
+
+                @keyframes cm-restore {
+                    from {
+                        transform: scale(0.15) translate(80vw, 60vh);
+                        opacity: 0;
+                    }
+                    to {
+                        transform: scale(1) translate(0, 0);
+                        opacity: 1;
+                    }
                 }
 
                 .cm-modal {
@@ -2774,10 +2805,17 @@
 
         minimize() {
             if (!this.overlay || this.isMinimized) return
-
-            // Скрываем основное окно
-            this.overlay.style.display = 'none'
             this.isMinimized = true
+
+            // Анимация сворачивания
+            this.overlay.classList.add('cm-minimizing')
+            this.container.classList.add('cm-minimizing')
+
+            setTimeout(() => {
+                this.overlay.style.display = 'none'
+                this.overlay.classList.remove('cm-minimizing')
+                this.container.classList.remove('cm-minimizing')
+            }, 300)
 
             // Создаём свёрнутую плашку
             this.minimizedElement = document.createElement('div')
@@ -2852,9 +2890,11 @@
 
             this.stopUrlWatch()
 
-            // Показываем основное окно
+            // Показываем основное окно с анимацией
             if (this.overlay) {
                 this.overlay.style.display = 'flex'
+                this.container.classList.add('cm-restoring')
+                setTimeout(() => this.container.classList.remove('cm-restoring'), 300)
             }
 
             this.isMinimized = false
