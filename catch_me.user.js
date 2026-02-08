@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.5.2
+// @version      2.6.2
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
@@ -12,6 +12,31 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.6.2
+//   style: disabled-стиль для cm-btn-secondary (цвет, курсор, прозрачность)
+//
+// 2.6.1
+//   fix: кнопка "Для письма" неактивна без территории
+//   style: белый цвет текста "Скопировано"
+//
+// 2.6.0
+//   feat: кнопка "Для письма" в согласованном срезании — копирует краткое сообщение
+//   style: "Скопировано!" → "Скопировано"
+//
+// 2.5.6
+//   feat: Д7 срезание — обязательные причина (requiredOneOf) и действия (minLength: 6)
+//   feat: поддержка requiredOneOf и minLength в валидации формы
+//
+// 2.5.5
+//   style: анимация переливания для плейсхолдера ▮▮▮
+//
+// 2.5.4
+//   style: плейсхолдер "???" заменён на "▮▮▮"
+//
+// 2.5.3
+//   fix: место срезания не отображалось при дефолтном "Промежуточное размыкание"
+//   fix: сброс скрытых чекбоксов при инициализации формы
 //
 // 2.5.2
 //   feat: hideIfBts — скрытие версии ПО в форме и сообщении при номере > 1000000
@@ -200,13 +225,13 @@
                                     hour: '2-digit',
                                     minute: '2-digit'
                                 }).replace(',', '')
-                                : '???'
+                                : '▮▮▮'
                             return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber} Перевозка завершена штатно на пункте выезда ${data.checkpointType} ${data.checkpointName}. На связь с ${dateStr} и до конца маршрута не выходила. Трек на картографической основе обрывается на месте последнего выхода ЭНП на связь.`
                         }
 
                         // Для ЖД - без информации о водителе
                         if (data.transportType === 'ЖД') {
-                            return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber} более 4-х часов не выходит на связь. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '???'} км. Нарушение подтверждено. Отправлено уведомление в ФТС.`
+                            return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber} более 4-х часов не выходит на связь. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '▮▮▮'} км. Нарушение подтверждено. Отправлено уведомление в ФТС.`
                         }
 
                         // Для Авто - с информацией о водителе
@@ -214,7 +239,7 @@
                             ? `Со слов водителя: ${fields.driverWords || ''}`
                             : 'До водителя дозвониться не удалось'
 
-                        return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber} более 4-х часов не выходит на связь. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '???'} км. ${driverContact}. Нарушение подтверждено. Отправлено уведомление в ФТС.`
+                        return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber} более 4-х часов не выходит на связь. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '▮▮▮'} км. ${driverContact}. Нарушение подтверждено. Отправлено уведомление в ФТС.`
                     },
 
                     // Связанные шаблоны (ответные сообщения)
@@ -513,7 +538,7 @@
 
                     generate(data, fields) {
                         if (fields.neverConnected) {
-                            return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber} , ПО ${fields.firmwareVersion || '???'}. Перевозка завершена штатно на пункте выезда ${data.checkpointType} ${data.checkpointName}, на связь с момента активации до конца маршрута не выходила. Трек на картографической основе не прорисовался.`
+                            return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber} , ПО ${fields.firmwareVersion || '▮▮▮'}. Перевозка завершена штатно на пункте выезда ${data.checkpointType} ${data.checkpointName}, на связь с момента активации до конца маршрута не выходила. Трек на картографической основе не прорисовался.`
                         }
 
                         const dateStr = fields.lastConnectionDate
@@ -524,7 +549,7 @@
                                 hour: '2-digit',
                                 minute: '2-digit'
                             }).replace(',', '')
-                            : '???'
+                            : '▮▮▮'
 
                         return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber} Перевозка завершена штатно на пункте выезда ${data.checkpointType} ${data.checkpointName}. На связь с ${dateStr} и до конца маршрута не выходила. Трек на картографической основе обрывается на месте последнего выхода ЭНП на связь.`
                     },
@@ -573,7 +598,7 @@
                     ],
 
                     generate(data, fields) {
-                        return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber} ПО: ${fields.firmwareVersion || '???'} Появилось нарушение "Низкий уровень заряда аккумулятора ${fields.batteryLevel || '???'}%". Нарушение отклонено. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '???'} км.`
+                        return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber} ПО: ${fields.firmwareVersion || '▮▮▮'} Появилось нарушение "Низкий уровень заряда аккумулятора ${fields.batteryLevel || '▮▮▮'}%". Нарушение отклонено. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '▮▮▮'} км.`
                     },
 
                     relatedTemplates: {},
@@ -699,19 +724,19 @@
                                     day: '2-digit', month: '2-digit', year: 'numeric',
                                     hour: 'numeric', minute: '2-digit'
                                 }).replace(',', '')
-                                : '???'
+                                : '▮▮▮'
                             const dateToStr = fields.dateTo
                                 ? new Date(fields.dateTo).toLocaleString('ru-RU', {
                                     day: '2-digit', month: '2-digit', year: 'numeric',
                                     hour: 'numeric', minute: '2-digit'
                                 }).replace(',', '')
-                                : '???'
-                            return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber}, ПО: ${fields.firmwareVersion || '???'}. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '???'} км. В период с ${dateFromStr} ч. до ${dateToStr} ч. поступило ${fields.signalCount || '???'} сигналов о нарушении: "Взлом запорного штыря". Нарушения подтверждены.`
+                                : '▮▮▮'
+                            return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber}, ПО: ${fields.firmwareVersion || '▮▮▮'}. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '▮▮▮'} км. В период с ${dateFromStr} ч. до ${dateToStr} ч. поступило ${fields.signalCount || '▮▮▮'} сигналов о нарушении: "Взлом запорного штыря". Нарушения подтверждены.`
                         }
 
                         // Не дозвонился до водителя
                         if (!fields.driverReached) {
-                            return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber}. ПО: ${fields.firmwareVersion || '???'}. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '???'} км. Поступило ${fields.signalCount || '???'} сигналов о нарушении "Взлом запорного штыря". До водителя дозвониться не удалось. Нарушения подтверждены, отправлено уведомление в ФТС.`
+                            return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber}. ПО: ${fields.firmwareVersion || '▮▮▮'}. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '▮▮▮'} км. Поступило ${fields.signalCount || '▮▮▮'} сигналов о нарушении "Взлом запорного штыря". До водителя дозвониться не удалось. Нарушения подтверждены, отправлено уведомление в ФТС.`
                         }
 
                         // Дозвонился - со слов водителя
@@ -735,7 +760,7 @@
                             ? 'Нарушение не подтверждено.'
                             : 'Нарушение подтверждено, отправлено уведомление в ФТС.'
 
-                        return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber}, ПО: ${fields.firmwareVersion || '???'}. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '???'} км. Поступил сигнал о нарушении "Взлом запорного штыря".${driverInfo} При попытке установить штыри глубже, ${alarmText}. ${confirmText}`
+                        return `ЭНП ${data.sealNumber} (перевозка ${data.transportType}) ${data.orderNumber}, ПО: ${fields.firmwareVersion || '▮▮▮'}. До пункта выезда ${data.checkpointType} ${data.checkpointName} ${fields.distance || '▮▮▮'} км. Поступил сигнал о нарушении "Взлом запорного штыря".${driverInfo} При попытке установить штыри глубже, ${alarmText}. ${confirmText}`
                     },
 
                     relatedTemplates: {},
@@ -890,14 +915,14 @@
                                 hour: '2-digit',
                                 minute: '2-digit'
                             }).replace(',', '')
-                            : '???'
+                            : '▮▮▮'
 
                         const locationPart = fields.atCheckpoint
                             ? 'ТС на КП завершения'
-                            : `До пункта завершения ${fields.distanceToEnd || '???'} км`
+                            : `До пункта завершения ${fields.distanceToEnd || '▮▮▮'} км`
 
-                        const territory = fields.territory || '???'
-                        const freq = fields.frequency || '???'
+                        const territory = fields.territory || '▮▮▮'
+                        const freq = fields.frequency || '▮▮▮'
                         let frequencyLine
                         if (fields.frequencyUnchanged) {
                             frequencyLine = `Частота: не изменялась - ${freq}`
@@ -927,15 +952,15 @@
 
                         const lines = [
                             `ЭНП ${data.sealNumber} ${data.orderNumber}`,
-                            `ПО: ${fields.firmwareVersion || '???'}`,
-                            `Заряд АКБ: ${fields.batteryLevel || '???'}%, АКБ Старта: ${fields.startBatteryLevel || '???'}%`,
+                            `ПО: ${fields.firmwareVersion || '▮▮▮'}`,
+                            `Заряд АКБ: ${fields.batteryLevel || '▮▮▮'}%, АКБ Старта: ${fields.startBatteryLevel || '▮▮▮'}%`,
                             `Активирована: ${activationStr}`,
                             `ТС: ${data.vehicleNumber}`,
                             `Маршрут: ${data.activationPoint} - ${data.deactivationPoint}`,
                             `${locationPart}.`,
                             `На территории: ${territory}.`,
                             frequencyLine,
-                            `Анализ: ${analysisParts.length ? analysisParts.join('. ') + '.' : '???'}`,
+                            `Анализ: ${analysisParts.length ? analysisParts.join('. ') + '.' : '▮▮▮'}`,
                         ]
 
                         if ((fields.additionalNote || '').trim()) {
@@ -976,7 +1001,7 @@
                             halfWidth: true,
                             hideIfBts: true,
                         },
-                        { id: 'reasonLabel', type: 'label', label: 'Причина' },
+                        { id: 'reasonLabel', type: 'label', label: 'Причина', requiredOneOf: ['reasonNoConnection', 'reasonEnpFault', 'reasonBatteryDrain', 'reasonLockFault'] },
                         {
                             id: 'reasonNoConnection',
                             type: 'checkbox',
@@ -1067,6 +1092,8 @@
                             type: 'textarea',
                             label: 'Описание действий',
                             placeholder: 'Удалённые команды, приложение СОПТ, индикация...',
+                            required: true,
+                            minLength: 6,
                         },
                     ],
 
@@ -1084,7 +1111,7 @@
 
                         const cuttingPlace = fields.cuttingAtDeactivation
                             ? data.deactivationPoint
-                            : (fields.cuttingPlace || '???')
+                            : (fields.cuttingPlace || '▮▮▮')
 
                         const lastConnStr = fields.lastConnection
                             ? new Date(fields.lastConnection).toLocaleString('ru-RU', {
@@ -1094,21 +1121,21 @@
                                 hour: '2-digit',
                                 minute: '2-digit'
                             }).replace(',', '')
-                            : '???'
+                            : '▮▮▮'
 
                         return [
                             `@IvanB0`,
                             `Дежурный Оператор 1 ЦУиМ`,
                             ``,
-                            `Оператором согласовано срезание ${sealLabel} ${data.sealNumber} ${orgLabel} в ${fields.territory || '???'}`,
-                            `по причине: ${reasons.length ? reasons.join(', ') : '???'}`,
+                            `Оператором согласовано срезание ${sealLabel} ${data.sealNumber} ${orgLabel} в ${fields.territory || '▮▮▮'}`,
+                            `по причине: ${reasons.length ? reasons.join(', ') : '▮▮▮'}`,
                             ``,
                             `Тип перевозок: ${data.transportProcedure}`,
                             `Перевозка: ${data.orderNumber}`,
-                            `Статус перевозки: ${data.transportStatus || '???'}`,
-                            `Процедура: ${fields.procedure || '???'}`,
+                            `Статус перевозки: ${data.transportStatus || '▮▮▮'}`,
+                            `Процедура: ${fields.procedure || '▮▮▮'}`,
                             `${sealLabel}: ${data.sealNumber}`,
-                            isBts ? null : `ПО: ${fields.firmwareVersion || '???'}`,
+                            isBts ? null : `ПО: ${fields.firmwareVersion || '▮▮▮'}`,
                             `Присутствие Агента: ${fields.agentPresent ? 'да' : 'нет'}`,
                             `Основной номер ТС: ${data.mainVehicleNumber}`,
                             `ГО: ${data.vehicleNumber}`,
@@ -1148,7 +1175,7 @@
                             halfWidth: true,
                             hideIfBts: true,
                         },
-                        { id: 'reasonLabel', type: 'label', label: 'Причина' },
+                        { id: 'reasonLabel', type: 'label', label: 'Причина', requiredOneOf: ['reasonNoConnection', 'reasonEnpFault', 'reasonBatteryDrain', 'reasonLockFault'] },
                         {
                             id: 'reasonNoConnection',
                             type: 'checkbox',
@@ -1216,6 +1243,7 @@
                             label: 'Причина отказа',
                             placeholder: 'Почему не согласовано...',
                             required: true,
+                            minLength: 6,
                         },
                     ],
 
@@ -1232,7 +1260,7 @@
 
                         const cuttingPlace = fields.cuttingAtDeactivation
                             ? data.deactivationPoint
-                            : (fields.cuttingPlace || '???')
+                            : (fields.cuttingPlace || '▮▮▮')
 
                         const lastConnStr = fields.lastConnection
                             ? new Date(fields.lastConnection).toLocaleString('ru-RU', {
@@ -1242,22 +1270,22 @@
                                 hour: '2-digit',
                                 minute: '2-digit'
                             }).replace(',', '')
-                            : '???'
+                            : '▮▮▮'
 
                         const lines = [
-                            `Оператором НЕ согласовано срезание ${sealLabel} ${data.sealNumber} в ${fields.territory || '???'}`,
-                            `Запрос по причине: ${reasons.length ? reasons.join(', ') : '???'}`,
+                            `Оператором НЕ согласовано срезание ${sealLabel} ${data.sealNumber} в ${fields.territory || '▮▮▮'}`,
+                            `Запрос по причине: ${reasons.length ? reasons.join(', ') : '▮▮▮'}`,
                             `Тип перевозок: ${data.transportProcedure}`,
                             `Перевозка: ${data.orderNumber}`,
-                            `Статус перевозки: ${data.transportStatus || '???'}`,
+                            `Статус перевозки: ${data.transportStatus || '▮▮▮'}`,
                             `${sealLabel}: ${data.sealNumber}`,
-                            isBts ? null : `ПО: ${fields.firmwareVersion || '???'}`,
+                            isBts ? null : `ПО: ${fields.firmwareVersion || '▮▮▮'}`,
                             `Основной номер ТС: ${data.mainVehicleNumber}`,
                             `ГО: ${data.vehicleNumber}`,
                             `КП активации: ${data.activationPoint}`,
                             `Место срезания: ${cuttingPlace}`,
                             `Последний выход на связь: ${lastConnStr}`,
-                            `Причина отказа: ${fields.reason || '???'}`,
+                            `Причина отказа: ${fields.reason || '▮▮▮'}`,
                         ]
 
                         return lines.filter(line => line !== null).join('\n')
@@ -1332,9 +1360,9 @@
 
         getSealNumber() {
             const el = document.querySelector('div[data-title="Арендуемые ЭНП"] span')
-            if (!el) return '???'
+            if (!el) return '▮▮▮'
             const match = el.textContent.match(/SN:\s*0*(\d+)/)
-            return match ? match[1] : '???'
+            return match ? match[1] : '▮▮▮'
         }
 
         getTransportType() {
@@ -1350,17 +1378,17 @@
                 if (href.includes('status-type-railway')) return 'ЖД'
                 if (href.includes('status-type-auto')) return 'Авто'
             }
-            return '???'
+            return '▮▮▮'
         }
 
         getOrderNumber() {
             const el = document.querySelector('label.text-orderNum span.status-card-sub')
-            return el ? el.textContent.trim() : '???'
+            return el ? el.textContent.trim() : '▮▮▮'
         }
 
         getCheckpointName() {
             const container = document.querySelector('div[data-title="Контрольные пункты"]')
-            if (!container) return '???'
+            if (!container) return '▮▮▮'
 
             const spans = container.querySelectorAll('span')
             for (const span of spans) {
@@ -1371,7 +1399,7 @@
                     return name
                 }
             }
-            return '???'
+            return '▮▮▮'
         }
 
         getCheckpointType() {
@@ -1385,7 +1413,7 @@
         // Пункт въезда (→)
         getEntryCheckpointName() {
             const container = document.querySelector('div[data-title="Контрольные пункты"]')
-            if (!container) return '???'
+            if (!container) return '▮▮▮'
 
             const spans = container.querySelectorAll('span')
             for (const span of spans) {
@@ -1396,7 +1424,7 @@
                     return name
                 }
             }
-            return '???'
+            return '▮▮▮'
         }
 
         getEntryCheckpointType() {
@@ -1415,31 +1443,31 @@
 
         getMainVehicleNumber() {
             const el = document.querySelector('div[data-title="Регистрационный знак транспортного средства"]')
-            return el ? el.textContent.trim() : '???'
+            return el ? el.textContent.trim() : '▮▮▮'
         }
 
         getVehicleNumber() {
             const el = document.querySelector('div[data-title="Регистрационный знак прицепа или полуприцепа"]')
-            return el ? el.textContent.trim() : '???'
+            return el ? el.textContent.trim() : '▮▮▮'
         }
 
         getActivationPoint() {
             const el = document.querySelector('div[data-title="Точка активации"]')
-            if (!el) return '???'
+            if (!el) return '▮▮▮'
             const name = el.textContent.trim()
             return /СВХ|ПОСТ/i.test(name) ? name : `МАПП ${name}`
         }
 
         getDeactivationPoint() {
             const el = document.querySelector('div[data-title="Точка деактивации"]')
-            if (!el) return '???'
+            if (!el) return '▮▮▮'
             const name = el.textContent.trim()
             return /СВХ|ПОСТ/i.test(name) ? name : `МАПП ${name}`
         }
 
         getTransportProcedure() {
             const el = document.querySelector('div[data-title="Процедура перевозки"]')
-            return el ? el.textContent.trim() : '???'
+            return el ? el.textContent.trim() : '▮▮▮'
         }
 
         getRegulationType() {
@@ -1901,8 +1929,18 @@
                 }
 
                 .cm-missing {
-                    color: #e53935;
                     font-weight: 700;
+                    background: linear-gradient(90deg, #e53935 40%, #ff8a80 50%, #e53935 60%);
+                    background-size: 200% 100%;
+                    -webkit-background-clip: text;
+                    background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    animation: cm-missing-shimmer 2s ease-in-out infinite;
+                }
+
+                @keyframes cm-missing-shimmer {
+                    0%, 100% { background-position: 100% 0; }
+                    50% { background-position: -100% 0; }
                 }
 
                 .cm-form-preview-wrap {
@@ -1978,9 +2016,16 @@
                     color: #333;
                 }
 
-                .cm-btn-secondary:hover {
+                .cm-btn-secondary:hover:not(:disabled) {
                     border-color: #1890ff;
                     color: #1890ff;
+                }
+
+                .cm-btn-secondary:disabled {
+                    color: #bbb;
+                    border-color: #e8e8e8;
+                    cursor: not-allowed;
+                    opacity: 0.7;
                 }
 
                 .cm-btn-primary {
@@ -2032,6 +2077,7 @@
                 .cm-copied {
                     background: #52c41a !important;
                     border-color: #52c41a !important;
+                    color: #fff !important;
                 }
 
                 .cm-hidden {
@@ -2266,6 +2312,13 @@
                 }
             })
 
+            // Сбрасываем скрытые чекбоксы, чтобы их hideIf-зависимые поля не прятались
+            template.fields.forEach((field) => {
+                if (field.type === 'checkbox' && this.isFieldHidden(field)) {
+                    this.fieldValues[field.id] = false
+                }
+            })
+
             this.createModal({
                 title: template.name,
                 subtitle: this.currentCategory.name,
@@ -2488,8 +2541,12 @@
         }
 
         renderFormFooter(template) {
+            const letterBtn = template.id === 'agreed'
+                ? '<button type="button" class="cm-btn cm-btn-secondary" id="cm-copy-letter">Для письма</button>'
+                : ''
             return `
                 <button type="button" class="cm-btn cm-btn-secondary" id="cm-back">Назад</button>
+                ${letterBtn}
                 <button type="button" class="cm-btn cm-btn-primary" id="cm-copy">Копировать</button>
             `
         }
@@ -2560,6 +2617,11 @@
             const copyBtn = this.container.querySelector('#cm-copy')
             if (copyBtn) {
                 copyBtn.addEventListener('click', () => this.copyMessage())
+            }
+
+            const copyLetterBtn = this.container.querySelector('#cm-copy-letter')
+            if (copyLetterBtn) {
+                copyLetterBtn.addEventListener('click', () => this.copyForLetter())
             }
 
             // Поля формы
@@ -2730,7 +2792,7 @@
             const message = template.generate(pageData, this.fieldValues)
             const previewEl = this.container.querySelector('#cm-preview-text')
             if (previewEl) {
-                previewEl.innerHTML = message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\?\?\?/g, '<span class="cm-missing">???</span>')
+                previewEl.innerHTML = message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/▮▮▮/g, '<span class="cm-missing">▮▮▮</span>')
             }
 
             // Обновляем состояние кнопки копирования
@@ -2739,10 +2801,14 @@
 
         updateCopyButtonState(template, pageData) {
             const copyBtn = this.container.querySelector('#cm-copy')
-            if (!copyBtn) return
+            if (copyBtn) {
+                copyBtn.disabled = !this.isFormValid(template, pageData)
+            }
 
-            const isValid = this.isFormValid(template, pageData)
-            copyBtn.disabled = !isValid
+            const letterBtn = this.container.querySelector('#cm-copy-letter')
+            if (letterBtn) {
+                letterBtn.disabled = !this.fieldValues.territory || this.fieldValues.territory.trim() === ''
+            }
         }
 
         isFormValid(template, pageData) {
@@ -2763,14 +2829,18 @@
                 if (field.showIfStatus && field.showIfStatus !== pageData.transportStatus) continue
                 if (this.isFieldHidden(field)) continue
 
+                // Проверка requiredOneOf (хотя бы один чекбокс из группы)
+                if (field.requiredOneOf && !field.requiredOneOf.some(id => this.fieldValues[id])) {
+                    return false
+                }
+
                 // Проверка required полей
                 if (field.required) {
                     const value = this.fieldValues[field.id]
                     if (!value || value.toString().trim() === '') {
                         return false
                     }
-                    // Минимум 6 символов для textarea
-                    if (field.type === 'textarea' && value.toString().trim().length < 6) {
+                    if (field.minLength && value.toString().trim().length < field.minLength) {
                         return false
                     }
                 }
@@ -2863,9 +2933,41 @@
             }
         }
 
+        async copyForLetter() {
+            const pageData = this.dataExtractor.extract()
+            const sealLabel = pageData.isBts ? 'НП' : 'ЭНП'
+
+            const text = [
+                `Оператором согласовано срезание ${sealLabel} ${pageData.sealNumber} в ${this.fieldValues.territory || '▮▮▮'}`,
+                ``,
+                `Тип перевозок: ${pageData.transportProcedure}`,
+                `Перевозка: ${pageData.orderNumber}`,
+                `${sealLabel}: ${pageData.sealNumber}`,
+                `Основной номер ТС: ${pageData.mainVehicleNumber}`,
+                `ГО: ${pageData.vehicleNumber}`,
+                ``,
+                `Просьба сообщить о факте срезания`,
+            ].join('\n')
+
+            const btn = this.container.querySelector('#cm-copy-letter')
+            try {
+                await navigator.clipboard.writeText(text)
+                this.showCopySuccess(btn)
+            } catch (err) {
+                const textarea = document.createElement('textarea')
+                textarea.value = text
+                textarea.style.cssText = 'position:fixed;opacity:0'
+                document.body.appendChild(textarea)
+                textarea.select()
+                document.execCommand('copy')
+                document.body.removeChild(textarea)
+                this.showCopySuccess(btn)
+            }
+        }
+
         showCopySuccess(btn) {
             const originalText = btn.textContent
-            btn.textContent = 'Скопировано!'
+            btn.textContent = 'Скопировано'
             btn.classList.add('cm-copied')
             setTimeout(() => {
                 btn.textContent = originalText
