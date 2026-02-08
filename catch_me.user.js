@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.3.0
+// @version      2.5.0
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
@@ -12,6 +12,20 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.5.0
+//   feat: hideIfStatuses — скрытие полей по статусу перевозки
+//   feat: процедура скрыта при Деактивирована/Распломбирована/Завершена, чекбокс "В точке деактивации" с галочкой
+//   refactor: удалён неиспользуемый механизм defaultByValue
+//   refactor: унифицирован defaultByStatus для checkbox и radio в showForm
+//   refactor: restoreFieldDefault поддерживает defaultByStatus
+//
+// 2.4.0
+//   feat: чекбокс "В точке деактивации" для места срезания (согласовано/не согласовано)
+//   feat: дефолт чекбокса привязан к процедуре (Завершение → checked) и статусу перевозки
+//   feat: defaultByValue — дефолт чекбокса зависит от значения другого поля (radio)
+//   feat: defaultByStatus для чекбоксов
+//   feat: автопереключение чекбокса при смене radio процедуры
 //
 // 2.3.0
 //   style: анимация сворачивания модалки к кнопке (scale + translate + fade)
@@ -1005,8 +1019,11 @@
                             ],
                             defaultByStatus: {
                                 'Деактивирована': 'Завершение',
+                                'Распломбирована': 'Завершение',
+                                'Завершена': 'Завершение',
                                 '_default': 'Промежуточное размыкание',
                             },
+                            hideIfStatuses: ['Деактивирована', 'Распломбирована', 'Завершена'],
                         },
                         {
                             id: 'agentPresent',
@@ -1016,10 +1033,20 @@
                             halfWidth: true,
                         },
                         {
+                            id: 'cuttingAtDeactivation',
+                            type: 'checkbox',
+                            label: 'В точке деактивации',
+                            default: true,
+                            halfWidth: true,
+                            showIfValue: { field: 'procedure', value: 'Завершение' },
+                        },
+                        {
                             id: 'cuttingPlace',
                             type: 'text',
                             label: 'Место срезания',
-                            placeholder: 'Авто: точка деактивации при "Деактивирована"',
+                            placeholder: 'Укажите место срезания',
+                            required: true,
+                            hideIf: 'cuttingAtDeactivation',
                         },
                         {
                             id: 'lastConnection',
@@ -1043,7 +1070,7 @@
                         if (fields.reasonBatteryDrain) reasons.push('разряд АКБ')
                         if (fields.reasonLockFault) reasons.push('неисправность запорного механизма')
 
-                        const cuttingPlace = (data.transportStatus === 'Деактивирована' && !(fields.cuttingPlace || '').trim())
+                        const cuttingPlace = fields.cuttingAtDeactivation
                             ? data.deactivationPoint
                             : (fields.cuttingPlace || '???')
 
@@ -1149,10 +1176,19 @@
                             hideIfAny: ['reasonNoConnection', 'reasonEnpFault', 'reasonBatteryDrain'],
                         },
                         {
+                            id: 'cuttingAtDeactivation',
+                            type: 'checkbox',
+                            label: 'В точке деактивации',
+                            defaultByStatus: { 'Деактивирована': true, 'Распломбирована': true, 'Завершена': true, '_default': false },
+                            halfWidth: true,
+                        },
+                        {
                             id: 'cuttingPlace',
                             type: 'text',
                             label: 'Место срезания',
-                            placeholder: 'Авто: точка деактивации при "Деактивирована"',
+                            placeholder: 'Укажите место срезания',
+                            required: true,
+                            hideIf: 'cuttingAtDeactivation',
                         },
                         {
                             id: 'lastConnection',
@@ -1177,7 +1213,7 @@
                         if (fields.reasonBatteryDrain) reasons.push('разряд АКБ')
                         if (fields.reasonLockFault) reasons.push('неисправность запорного механизма')
 
-                        const cuttingPlace = (data.transportStatus === 'Деактивирована' && !(fields.cuttingPlace || '').trim())
+                        const cuttingPlace = fields.cuttingAtDeactivation
                             ? data.deactivationPoint
                             : (fields.cuttingPlace || '???')
 
@@ -2190,13 +2226,22 @@
             })
 
             // Сброс значений полей
+            this.currentStatus = pageData.transportStatus
             this.fieldValues = {}
             template.fields.forEach((field) => {
                 // Не устанавливаем default для полей скрытых по showIfStatus
                 if (field.showIfStatus && field.showIfStatus !== pageData.transportStatus) {
                     return
                 }
-                if (field.default !== undefined) {
+                if (field.defaultByStatus) {
+                    const status = pageData.transportStatus
+                    const val = field.defaultByStatus[status] !== undefined
+                        ? field.defaultByStatus[status]
+                        : field.defaultByStatus['_default']
+                    if (val !== undefined) {
+                        this.fieldValues[field.id] = val
+                    }
+                } else if (field.default !== undefined) {
                     this.fieldValues[field.id] = field.default
                 }
             })
@@ -2337,7 +2382,7 @@
                                     <div class="cm-checkbox-group">
                                         <input type="checkbox" class="cm-checkbox"
                                             id="field-${field.id}"
-                                            ${field.default ? 'checked' : ''}>
+                                            ${this.fieldValues[field.id] ? 'checked' : ''}>
                                         <label class="cm-checkbox-label" for="field-${field.id}">${field.label}</label>
                                     </div>
                                 </div>
@@ -2556,6 +2601,7 @@
         // Проверяет, скрыто ли поле по условиям showIf/hideIf/etc.
         isFieldHidden(field) {
             let hidden = false
+            if (field.hideIfStatuses && this.currentStatus && field.hideIfStatuses.includes(this.currentStatus)) return true
             if (field.showIf && !this.fieldValues[field.showIf]) hidden = true
             if (field.showIfValue) {
                 const { field: f, value: v } = field.showIfValue
@@ -2583,12 +2629,31 @@
             if (!el) return
 
             if (field.type === 'checkbox') {
-                const defaultVal = field.default !== undefined ? field.default : false
-                el.checked = defaultVal
-                this.fieldValues[field.id] = defaultVal
+                el.checked = false
+                this.fieldValues[field.id] = false
             } else {
                 el.value = ''
                 this.fieldValues[field.id] = ''
+            }
+        }
+
+        restoreFieldDefault(field) {
+            let defaultVal
+            if (field.defaultByStatus) {
+                defaultVal = field.defaultByStatus[this.currentStatus] !== undefined
+                    ? field.defaultByStatus[this.currentStatus]
+                    : field.defaultByStatus['_default']
+            } else if (field.default !== undefined) {
+                defaultVal = field.default
+            }
+            if (defaultVal === undefined) return
+
+            if (field.type === 'checkbox') {
+                const el = this.container.querySelector(`#field-${field.id}`)
+                if (el) {
+                    el.checked = defaultVal
+                    this.fieldValues[field.id] = defaultVal
+                }
             }
         }
 
@@ -2631,6 +2696,11 @@
                         // Очищаем поле при скрытии
                         if (shouldHide && !wasHidden) {
                             this.resetField(f)
+                        }
+
+                        // Восстанавливаем default при появлении
+                        if (!shouldHide && wasHidden) {
+                            this.restoreFieldDefault(f)
                         }
                     })
                 }
@@ -2800,6 +2870,7 @@
             this.currentTemplate = null
             this.currentRelatedTemplate = null
             this.regulationType = null
+            this.currentStatus = null
             this.lastOrderId = null
         }
 
