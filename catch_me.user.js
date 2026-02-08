@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.5.0
+// @version      2.5.2
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
@@ -12,6 +12,13 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.5.2
+//   feat: hideIfBts — скрытие версии ПО в форме и сообщении при номере > 1000000
+//   feat: "Срезание согласовано с РБ." в сообщении согласованного срезания БТС
+//
+// 2.5.1
+//   feat: Д7 срезание — НП/БТС вместо ЭНП/ЦРЦП при номере > 1000000
 //
 // 2.5.0
 //   feat: hideIfStatuses — скрытие полей по статусу перевозки
@@ -967,6 +974,7 @@
                             datalist: FIRMWARE_VERSIONS,
                             required: true,
                             halfWidth: true,
+                            hideIfBts: true,
                         },
                         { id: 'reasonLabel', type: 'label', label: 'Причина' },
                         {
@@ -1063,6 +1071,10 @@
                     ],
 
                     generate(data, fields) {
+                        const isBts = Number(data.sealNumber) > 1000000
+                        const sealLabel = isBts ? 'НП' : 'ЭНП'
+                        const orgLabel = isBts ? 'БТС' : 'ЦРЦП'
+
                         const reasons = []
                         if (fields.reasonNoConnection) reasons.push('отсутствие связи')
                         if (fields.reasonNfcFault) reasons.push('неисправность NFC модуля')
@@ -1088,15 +1100,15 @@
                             `@IvanB0`,
                             `Дежурный Оператор 1 ЦУиМ`,
                             ``,
-                            `Оператором согласовано срезание ЭНП ${data.sealNumber} ЦРЦП в ${fields.territory || '???'}`,
+                            `Оператором согласовано срезание ${sealLabel} ${data.sealNumber} ${orgLabel} в ${fields.territory || '???'}`,
                             `по причине: ${reasons.length ? reasons.join(', ') : '???'}`,
                             ``,
                             `Тип перевозок: ${data.transportProcedure}`,
                             `Перевозка: ${data.orderNumber}`,
                             `Статус перевозки: ${data.transportStatus || '???'}`,
                             `Процедура: ${fields.procedure || '???'}`,
-                            `ЭНП: ${data.sealNumber}`,
-                            `ПО: ${fields.firmwareVersion || '???'}`,
+                            `${sealLabel}: ${data.sealNumber}`,
+                            isBts ? null : `ПО: ${fields.firmwareVersion || '???'}`,
                             `Присутствие Агента: ${fields.agentPresent ? 'да' : 'нет'}`,
                             `Основной номер ТС: ${data.mainVehicleNumber}`,
                             `ГО: ${data.vehicleNumber}`,
@@ -1104,10 +1116,11 @@
                             `Место срезания: ${cuttingPlace}`,
                             ``,
                             (fields.actions || '').trim() ? fields.actions.trim() : null,
-                            (fields.actions || '').trim() ? `` : null,
+                            isBts ? `Срезание согласовано с РБ.` : null,
+                            (fields.actions || '').trim() || isBts ? `` : null,
                             `Последний выход на связь: ${lastConnStr}`,
                             ``,
-                            `ЭНП ${data.sealNumber} была срезана`,
+                            `${sealLabel} ${data.sealNumber} была срезана`,
                         ].filter(line => line !== null).join('\n')
                     },
 
@@ -1133,6 +1146,7 @@
                             datalist: FIRMWARE_VERSIONS,
                             required: true,
                             halfWidth: true,
+                            hideIfBts: true,
                         },
                         { id: 'reasonLabel', type: 'label', label: 'Причина' },
                         {
@@ -1206,6 +1220,9 @@
                     ],
 
                     generate(data, fields) {
+                        const isBts = Number(data.sealNumber) > 1000000
+                        const sealLabel = isBts ? 'НП' : 'ЭНП'
+
                         const reasons = []
                         if (fields.reasonNoConnection) reasons.push('отсутствие связи')
                         if (fields.reasonNfcFault) reasons.push('неисправность NFC модуля')
@@ -1228,13 +1245,13 @@
                             : '???'
 
                         const lines = [
-                            `Оператором НЕ согласовано срезание ЭНП ${data.sealNumber} в ${fields.territory || '???'}`,
+                            `Оператором НЕ согласовано срезание ${sealLabel} ${data.sealNumber} в ${fields.territory || '???'}`,
                             `Запрос по причине: ${reasons.length ? reasons.join(', ') : '???'}`,
                             `Тип перевозок: ${data.transportProcedure}`,
                             `Перевозка: ${data.orderNumber}`,
                             `Статус перевозки: ${data.transportStatus || '???'}`,
-                            `ЭНП: ${data.sealNumber}`,
-                            `ПО: ${fields.firmwareVersion || '???'}`,
+                            `${sealLabel}: ${data.sealNumber}`,
+                            isBts ? null : `ПО: ${fields.firmwareVersion || '???'}`,
                             `Основной номер ТС: ${data.mainVehicleNumber}`,
                             `ГО: ${data.vehicleNumber}`,
                             `КП активации: ${data.activationPoint}`,
@@ -1243,7 +1260,7 @@
                             `Причина отказа: ${fields.reason || '???'}`,
                         ]
 
-                        return lines.join('\n')
+                        return lines.filter(line => line !== null).join('\n')
                     },
 
                     relatedTemplates: {},
@@ -1294,8 +1311,10 @@
 
     class DataExtractor {
         extract() {
+            const sealNumber = this.getSealNumber()
             return {
-                sealNumber: this.getSealNumber(),
+                sealNumber,
+                isBts: Number(sealNumber) > 1000000,
                 transportType: this.getTransportType(),
                 transportStatus: this.getTransportStatus(),
                 orderNumber: this.getOrderNumber(),
@@ -2227,6 +2246,7 @@
 
             // Сброс значений полей
             this.currentStatus = pageData.transportStatus
+            this.currentIsBts = pageData.isBts
             this.fieldValues = {}
             template.fields.forEach((field) => {
                 // Не устанавливаем default для полей скрытых по showIfStatus
@@ -2601,6 +2621,7 @@
         // Проверяет, скрыто ли поле по условиям showIf/hideIf/etc.
         isFieldHidden(field) {
             let hidden = false
+            if (field.hideIfBts && this.currentIsBts) return true
             if (field.hideIfStatuses && this.currentStatus && field.hideIfStatuses.includes(this.currentStatus)) return true
             if (field.showIf && !this.fieldValues[field.showIf]) hidden = true
             if (field.showIfValue) {
@@ -2871,6 +2892,7 @@
             this.currentRelatedTemplate = null
             this.regulationType = null
             this.currentStatus = null
+            this.currentIsBts = false
             this.lastOrderId = null
         }
 
