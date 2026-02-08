@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.6.3
+// @version      2.6.5
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
@@ -12,6 +12,13 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.6.5
+//   feat: withDatePicker — кнопка-календарик рядом с текстовым полем даты
+//
+// 2.6.4
+//   feat: "Последний выход на связь" — текстовое поле с парсингом разных форматов даты
+//   feat: Utils.formatDateTime — парсинг DD.MM.YYYY HH:MM, YYYY-MM-DD HH:MM, datetime-local
 //
 // 2.6.3
 //   feat: необязательное поле "Температура в телеметрии" для согласованного срезания
@@ -1086,9 +1093,11 @@
                         },
                         {
                             id: 'lastConnection',
-                            type: 'datetime',
+                            type: 'text',
                             label: 'Последний выход на связь',
+                            placeholder: '03.02.2026 20:10',
                             required: true,
+                            withDatePicker: true,
                         },
                         {
                             id: 'actions',
@@ -1122,15 +1131,7 @@
                             ? data.deactivationPoint
                             : (fields.cuttingPlace || '▮▮▮')
 
-                        const lastConnStr = fields.lastConnection
-                            ? new Date(fields.lastConnection).toLocaleString('ru-RU', {
-                                day: '2-digit',
-                                month: '2-digit',
-                                year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                            }).replace(',', '')
-                            : '▮▮▮'
+                        const lastConnStr = Utils.formatDateTime(fields.lastConnection)
 
                         return [
                             `@IvanB0`,
@@ -1243,9 +1244,11 @@
                         },
                         {
                             id: 'lastConnection',
-                            type: 'datetime',
+                            type: 'text',
                             label: 'Последний выход на связь',
+                            placeholder: '03.02.2026 20:10',
                             required: true,
+                            withDatePicker: true,
                         },
                         {
                             id: 'reason',
@@ -1272,15 +1275,7 @@
                             ? data.deactivationPoint
                             : (fields.cuttingPlace || '▮▮▮')
 
-                        const lastConnStr = fields.lastConnection
-                            ? new Date(fields.lastConnection).toLocaleString('ru-RU', {
-                                day: '2-digit',
-                                month: '2-digit',
-                                year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                            }).replace(',', '')
-                            : '▮▮▮'
+                        const lastConnStr = Utils.formatDateTime(fields.lastConnection)
 
                         const lines = [
                             `Оператором НЕ согласовано срезание ${sealLabel} ${data.sealNumber} в ${fields.territory || '▮▮▮'}`,
@@ -1340,6 +1335,22 @@
         // Проверить есть ли связанные шаблоны
         hasRelatedTemplates(template) {
             return template.relatedTemplates && Object.keys(template.relatedTemplates).length > 0
+        },
+
+        // Парсинг даты из разных форматов → DD.MM.YYYY HH:MM
+        formatDateTime(value) {
+            if (!value) return '▮▮▮'
+            const s = value.trim()
+
+            // DD.MM.YYYY HH:MM[:SS]
+            const ru = s.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/)
+            if (ru) return `${ru[1]}.${ru[2]}.${ru[3]} ${ru[4]}:${ru[5]}`
+
+            // YYYY-MM-DD HH:MM[:SS] или datetime-local (YYYY-MM-DDTHH:MM)
+            const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/)
+            if (iso) return `${iso[3]}.${iso[2]}.${iso[1]} ${iso[4]}:${iso[5]}`
+
+            return s
         },
     }
 
@@ -1838,6 +1849,31 @@
 
                 .cm-clear-btn:hover {
                     color: #333;
+                }
+
+                .cm-datepicker-btn {
+                    position: absolute;
+                    right: 6px;
+                    background: none;
+                    border: none;
+                    cursor: pointer;
+                    padding: 0 4px;
+                    font-size: 16px;
+                    line-height: 1;
+                    opacity: 0.5;
+                    transition: opacity 0.15s;
+                }
+
+                .cm-datepicker-btn:hover {
+                    opacity: 1;
+                }
+
+                .cm-datepicker-hidden {
+                    position: absolute;
+                    width: 0;
+                    height: 0;
+                    opacity: 0;
+                    pointer-events: none;
                 }
 
                 .cm-radio-group {
@@ -2431,6 +2467,9 @@
                             const clearBtn = field.datalist
                                 ? `<button type="button" class="cm-clear-btn cm-hidden" data-clear="field-${field.id}">&times;</button>`
                                 : ''
+                            const datePickerBtn = field.withDatePicker
+                                ? `<button type="button" class="cm-datepicker-btn" data-for="field-${field.id}">&#128197;</button><input type="datetime-local" class="cm-datepicker-hidden" data-target="field-${field.id}">`
+                                : ''
                             return `
                                 <div class="cm-form-group ${hidden} ${halfWidth}" data-field="${field.id}" data-showif="${field.showIf || ''}" data-hideif="${field.hideIf || ''}">
                                     <label class="cm-label">${field.label}${field.required ? ' *' : ''}</label>
@@ -2443,6 +2482,7 @@
                                             ${field.max !== undefined ? `max="${field.max}"` : ''}
                                             ${field.required ? 'required' : ''}>
                                         ${clearBtn}
+                                        ${datePickerBtn}
                                     </div>
                                     ${datalistHtml}
                                 </div>
@@ -2666,6 +2706,21 @@
                     input.focus()
                     btn.classList.add('cm-hidden')
                     this.updatePreview()
+                })
+            })
+
+            // Кнопки календаря
+            this.container.querySelectorAll('.cm-datepicker-btn').forEach((btn) => {
+                const picker = btn.nextElementSibling
+                btn.addEventListener('click', () => {
+                    picker.showPicker ? picker.showPicker() : picker.click()
+                })
+                picker.addEventListener('change', () => {
+                    const target = this.container.querySelector(`#${picker.dataset.target}`)
+                    if (target && picker.value) {
+                        target.value = Utils.formatDateTime(picker.value)
+                        this.updatePreview()
+                    }
                 })
             })
 
