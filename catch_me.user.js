@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.6.5
+// @version      2.8.0
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
@@ -12,6 +12,24 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.8.0
+//   feat: per-seal поля (ПО, связь, температура) для множественных пломб в срезании
+//   feat: renderPerSealGroups/renderPerSealField — группы полей по каждой пломбе
+//   feat: "была срезана" → "были срезаны" при 2+ выбранных пломбах
+//   feat: per-seal валидация required полей
+//   style: карточки пломб по 2 в ряд (flex-wrap grid)
+//
+// 2.7.0
+//   feat: поддержка множественных ЭНП/НП — чекбоксы выбора пломб при 2+ на странице
+//   feat: getSealNumbers() извлекает все пломбы, renderSealRow() условный рендер
+//   feat: selectedSeals подставляется в сообщение и письмо через join(', ')
+//
+// 2.6.7
+//   refactor: чекбокс "Присутствие Агента" перемещён перед "Причина", убран halfWidth
+//
+// 2.6.6
+//   style: синий highlight для чекбокса "Присутствие Агента"
 //
 // 2.6.5
 //   feat: withDatePicker — кнопка-календарик рядом с текстовым полем даты
@@ -1010,6 +1028,15 @@
                             required: true,
                             halfWidth: true,
                             hideIfBts: true,
+                            perSeal: true,
+                        },
+                        {
+                            id: 'agentPresent',
+                            type: 'checkbox',
+                            label: 'Присутствие Агента',
+                            default: false,
+                            highlight: true,
+                            highlightColor: 'blue',
                         },
                         { id: 'reasonLabel', type: 'label', label: 'Причина', requiredOneOf: ['reasonNoConnection', 'reasonEnpFault', 'reasonBatteryDrain', 'reasonLockFault'] },
                         {
@@ -1069,13 +1096,6 @@
                             hideIfStatuses: ['Деактивирована', 'Распломбирована', 'Завершена'],
                         },
                         {
-                            id: 'agentPresent',
-                            type: 'checkbox',
-                            label: 'Присутствие Агента',
-                            default: false,
-                            halfWidth: true,
-                        },
-                        {
                             id: 'cuttingAtDeactivation',
                             type: 'checkbox',
                             label: 'В точке деактивации',
@@ -1098,6 +1118,7 @@
                             placeholder: '03.02.2026 20:10',
                             required: true,
                             withDatePicker: true,
+                            perSeal: true,
                         },
                         {
                             id: 'actions',
@@ -1112,13 +1133,17 @@
                             type: 'text',
                             label: 'Температура в телеметрии',
                             placeholder: 'например -24',
+                            perSeal: true,
                         },
                     ],
 
                     generate(data, fields) {
-                        const isBts = Number(data.sealNumber) > 1000000
+                        const isBts = data.isBts
                         const sealLabel = isBts ? 'НП' : 'ЭНП'
                         const orgLabel = isBts ? 'БТС' : 'ЦРЦП'
+                        const sfv = data.sealFieldValues
+                        const seals = data.selectedSeals || [data.sealNumber]
+                        const isMulti = seals.length > 1
 
                         const reasons = []
                         if (fields.reasonNoConnection) reasons.push('отсутствие связи')
@@ -1131,7 +1156,38 @@
                             ? data.deactivationPoint
                             : (fields.cuttingPlace || '▮▮▮')
 
-                        const lastConnStr = Utils.formatDateTime(fields.lastConnection)
+                        // ПО: comma-separated по порядку пломб
+                        let fwLine = null
+                        if (!isBts) {
+                            if (sfv) {
+                                fwLine = `ПО: ${seals.map(s => sfv[s]?.firmwareVersion || '▮▮▮').join(', ')}`
+                            } else {
+                                fwLine = `ПО: ${fields.firmwareVersion || '▮▮▮'}`
+                            }
+                        }
+
+                        // Per-seal блоки lastConnection + telemetryTemperature
+                        const perSealLines = []
+                        if (sfv) {
+                            seals.forEach((s, i) => {
+                                if (i > 0) perSealLines.push('')
+                                const sv = sfv[s] || {}
+                                const connStr = Utils.formatDateTime(sv.lastConnection)
+                                perSealLines.push(`${isMulti ? s + ' ' : ''}Последний выход на связь: ${connStr}`)
+                                if (/\d/.test(sv.telemetryTemperature || '')) {
+                                    perSealLines.push(`Температура в последней телеметрии: ${sv.telemetryTemperature.trim()}°`)
+                                }
+                            })
+                        } else {
+                            const lastConnStr = Utils.formatDateTime(fields.lastConnection)
+                            perSealLines.push(`Последний выход на связь: ${lastConnStr}`)
+                            if (/\d/.test(fields.telemetryTemperature || '')) {
+                                perSealLines.push(`Температура в последней телеметрии: ${fields.telemetryTemperature.trim()}°`)
+                            }
+                        }
+
+                        // "была срезана" → "были срезаны"
+                        const cutVerb = isMulti ? 'были срезаны' : 'была срезана'
 
                         return [
                             `@IvanB0`,
@@ -1145,7 +1201,7 @@
                             `Статус перевозки: ${data.transportStatus || '▮▮▮'}`,
                             `Процедура: ${fields.procedure || '▮▮▮'}`,
                             `${sealLabel}: ${data.sealNumber}`,
-                            isBts ? null : `ПО: ${fields.firmwareVersion || '▮▮▮'}`,
+                            fwLine,
                             `Присутствие Агента: ${fields.agentPresent ? 'да' : 'нет'}`,
                             `Основной номер ТС: ${data.mainVehicleNumber}`,
                             `ГО: ${data.vehicleNumber}`,
@@ -1155,10 +1211,9 @@
                             (fields.actions || '').trim() ? fields.actions.trim() : null,
                             isBts ? `Срезание согласовано с РБ.` : null,
                             (fields.actions || '').trim() || isBts ? `` : null,
-                            `Последний выход на связь: ${lastConnStr}`,
-                            /\d/.test(fields.telemetryTemperature || '') ? `Температура в последней телеметрии: ${fields.telemetryTemperature.trim()}°` : null,
+                            ...perSealLines,
                             ``,
-                            `${sealLabel} ${data.sealNumber} была срезана`,
+                            `${sealLabel} ${data.sealNumber} ${cutVerb}`,
                         ].filter(line => line !== null).join('\n')
                     },
 
@@ -1185,6 +1240,7 @@
                             required: true,
                             halfWidth: true,
                             hideIfBts: true,
+                            perSeal: true,
                         },
                         { id: 'reasonLabel', type: 'label', label: 'Причина', requiredOneOf: ['reasonNoConnection', 'reasonEnpFault', 'reasonBatteryDrain', 'reasonLockFault'] },
                         {
@@ -1249,6 +1305,7 @@
                             placeholder: '03.02.2026 20:10',
                             required: true,
                             withDatePicker: true,
+                            perSeal: true,
                         },
                         {
                             id: 'reason',
@@ -1261,8 +1318,11 @@
                     ],
 
                     generate(data, fields) {
-                        const isBts = Number(data.sealNumber) > 1000000
+                        const isBts = data.isBts
                         const sealLabel = isBts ? 'НП' : 'ЭНП'
+                        const sfv = data.sealFieldValues
+                        const seals = data.selectedSeals || [data.sealNumber]
+                        const isMulti = seals.length > 1
 
                         const reasons = []
                         if (fields.reasonNoConnection) reasons.push('отсутствие связи')
@@ -1275,7 +1335,29 @@
                             ? data.deactivationPoint
                             : (fields.cuttingPlace || '▮▮▮')
 
-                        const lastConnStr = Utils.formatDateTime(fields.lastConnection)
+                        // ПО: comma-separated по порядку пломб
+                        let fwLine = null
+                        if (!isBts) {
+                            if (sfv) {
+                                fwLine = `ПО: ${seals.map(s => sfv[s]?.firmwareVersion || '▮▮▮').join(', ')}`
+                            } else {
+                                fwLine = `ПО: ${fields.firmwareVersion || '▮▮▮'}`
+                            }
+                        }
+
+                        // Per-seal lastConnection
+                        const perSealConnLines = []
+                        if (sfv) {
+                            seals.forEach((s, i) => {
+                                if (i > 0) perSealConnLines.push('')
+                                const sv = sfv[s] || {}
+                                const connStr = Utils.formatDateTime(sv.lastConnection)
+                                perSealConnLines.push(`${isMulti ? s + ' ' : ''}Последний выход на связь: ${connStr}`)
+                            })
+                        } else {
+                            const lastConnStr = Utils.formatDateTime(fields.lastConnection)
+                            perSealConnLines.push(`Последний выход на связь: ${lastConnStr}`)
+                        }
 
                         const lines = [
                             `Оператором НЕ согласовано срезание ${sealLabel} ${data.sealNumber} в ${fields.territory || '▮▮▮'}`,
@@ -1284,12 +1366,12 @@
                             `Перевозка: ${data.orderNumber}`,
                             `Статус перевозки: ${data.transportStatus || '▮▮▮'}`,
                             `${sealLabel}: ${data.sealNumber}`,
-                            isBts ? null : `ПО: ${fields.firmwareVersion || '▮▮▮'}`,
+                            fwLine,
                             `Основной номер ТС: ${data.mainVehicleNumber}`,
                             `ГО: ${data.vehicleNumber}`,
                             `КП активации: ${data.activationPoint}`,
                             `Место срезания: ${cuttingPlace}`,
-                            `Последний выход на связь: ${lastConnStr}`,
+                            ...perSealConnLines,
                             `Причина отказа: ${fields.reason || '▮▮▮'}`,
                         ]
 
@@ -1360,10 +1442,11 @@
 
     class DataExtractor {
         extract() {
-            const sealNumber = this.getSealNumber()
+            const sealNumbers = this.getSealNumbers()
             return {
-                sealNumber,
-                isBts: Number(sealNumber) > 1000000,
+                sealNumber: sealNumbers[0],
+                sealNumbers,
+                isBts: Number(sealNumbers[0]) > 1000000,
                 transportType: this.getTransportType(),
                 transportStatus: this.getTransportStatus(),
                 orderNumber: this.getOrderNumber(),
@@ -1379,11 +1462,14 @@
             }
         }
 
-        getSealNumber() {
-            const el = document.querySelector('div[data-title="Арендуемые ЭНП"] span')
-            if (!el) return '▮▮▮'
-            const match = el.textContent.match(/SN:\s*0*(\d+)/)
-            return match ? match[1] : '▮▮▮'
+        getSealNumbers() {
+            const els = document.querySelectorAll('div[data-title="Арендуемые ЭНП"] span')
+            const numbers = []
+            els.forEach(el => {
+                const match = el.textContent.match(/SN:\s*0*(\d+)/)
+                if (match) numbers.push(match[1])
+            })
+            return numbers.length ? numbers : ['▮▮▮']
         }
 
         getTransportType() {
@@ -1515,6 +1601,8 @@
             this.regulationType = null
             this.fieldValues = {}
             this.dataExtractor = new DataExtractor()
+            this.selectedSeals = []
+            this.sealFieldValues = {}
             this.navigationStack = [] // История навигации для кнопки "Назад"
             this.lastOrderId = null // ID перевозки при открытии формы
             this.urlWatchInterval = null
@@ -1974,6 +2062,25 @@
                     accent-color: #fb8c00;
                 }
 
+                .cm-checkbox-highlight-blue {
+                    background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+                    border: 2px solid #1890ff;
+                    border-radius: 6px;
+                    padding: 12px 16px;
+                    margin-bottom: 16px;
+                }
+
+                .cm-checkbox-highlight-blue .cm-checkbox-label {
+                    font-weight: 600;
+                    color: #1565c0;
+                }
+
+                .cm-checkbox-highlight-blue .cm-checkbox {
+                    width: 20px;
+                    height: 20px;
+                    accent-color: #1890ff;
+                }
+
                 .cm-missing {
                     font-weight: 700;
                     background: linear-gradient(90deg, #e53935 40%, #ff8a80 50%, #e53935 60%);
@@ -2118,6 +2225,53 @@
                 .cm-data-value {
                     color: #333;
                     font-weight: 500;
+                }
+
+                .cm-seal-selector {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 6px;
+                }
+
+                .cm-seal-option {
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    cursor: pointer;
+                    font-size: 13px;
+                    padding: 2px 8px;
+                    background: #f0f7ff;
+                    border: 1px solid #91caff;
+                    border-radius: 4px;
+                    user-select: none;
+                }
+
+                .cm-seal-option input {
+                    accent-color: #1890ff;
+                }
+
+                .cm-seal-groups-wrap {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 12px;
+                }
+
+                .cm-seal-group {
+                    border: 1px solid #e8e8e8;
+                    border-radius: 6px;
+                    padding: 10px 12px 6px;
+                    flex: 1 1 calc(50% - 6px);
+                    min-width: 180px;
+                    box-sizing: border-box;
+                }
+
+                .cm-seal-group-header {
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #1890ff;
+                    margin-bottom: 8px;
+                    padding-bottom: 4px;
+                    border-bottom: 1px solid #e8e8e8;
                 }
 
                 .cm-copied {
@@ -2324,6 +2478,7 @@
 
             const template = this.currentRelatedTemplate || this.currentTemplate
             const pageData = this.dataExtractor.extract()
+            this.selectedSeals = [...pageData.sealNumbers]
 
             // Сохраняем текущее состояние для навигации
             this.navigationStack.push({
@@ -2377,15 +2532,30 @@
             this.updatePreview()
         }
 
+        renderSealRow(pageData) {
+            if (pageData.sealNumbers.length > 1) {
+                const checkboxes = pageData.sealNumbers.map(num =>
+                    `<label class="cm-seal-option"><input type="checkbox" class="cm-seal-check" value="${num}" ${this.selectedSeals.includes(num) ? 'checked' : ''}> ${num}</label>`
+                ).join('')
+                return `
+                    <div class="cm-data-row">
+                        <span class="cm-data-label">ЭНП/НП:</span>
+                        <div class="cm-seal-selector">${checkboxes}</div>
+                    </div>`
+            }
+            return `
+                <div class="cm-data-row">
+                    <span class="cm-data-label">ЭНП:</span>
+                    <span class="cm-data-value">${pageData.sealNumber}</span>
+                </div>`
+        }
+
         renderForm(template, pageData) {
             const hasRelated = Utils.hasRelatedTemplates(template) && !this.currentRelatedTemplate
 
             return `
                 <div class="cm-data-info">
-                    <div class="cm-data-row">
-                        <span class="cm-data-label">ЭНП:</span>
-                        <span class="cm-data-value">${pageData.sealNumber}</span>
-                    </div>
+                    ${this.renderSealRow(pageData)}
                     <div class="cm-data-row">
                         <span class="cm-data-label">${this.regulationType === 'D7' ? 'Процедура:' : 'Тип перевозки:'}</span>
                         <span class="cm-data-value">${this.regulationType === 'D7' ? pageData.transportProcedure : pageData.transportType}</span>
@@ -2437,8 +2607,14 @@
         }
 
         renderFields(fields, pageData) {
-            return fields
+            const isMultiSeal = this.selectedSeals.length > 1
+            const perSealFields = isMultiSeal ? fields.filter(f => f.perSeal) : []
+
+            let html = fields
                 .map((field) => {
+                    // Пропускаем perSeal поля при мульти-пломбе (рендерятся в группах)
+                    if (isMultiSeal && field.perSeal) return ''
+
                     // Скрываем поле если не соответствует типу транспорта
                     if (field.showIfTransport && field.showIfTransport !== pageData.transportType) {
                         return ''
@@ -2453,7 +2629,7 @@
                     const halfWidth = field.halfWidth ? 'cm-form-group-half' : ''
 
                     const highlightClass = field.highlight
-                        ? (field.highlightColor === 'red' ? 'cm-checkbox-highlight-red' : field.highlightColor === 'orange' ? 'cm-checkbox-highlight-orange' : 'cm-checkbox-highlight')
+                        ? (field.highlightColor === 'red' ? 'cm-checkbox-highlight-red' : field.highlightColor === 'orange' ? 'cm-checkbox-highlight-orange' : field.highlightColor === 'blue' ? 'cm-checkbox-highlight-blue' : 'cm-checkbox-highlight')
                         : ''
 
                     switch (field.type) {
@@ -2562,6 +2738,55 @@
                     }
                 })
                 .join('')
+
+            if (perSealFields.length > 0) {
+                html += this.renderPerSealGroups(perSealFields)
+            }
+
+            return html
+        }
+
+        renderPerSealGroups(perSealFields) {
+            const groups = this.selectedSeals.map(seal => `
+                <div class="cm-seal-group" data-seal="${seal}">
+                    <div class="cm-seal-group-header">ЭНП ${seal}</div>
+                    ${perSealFields.map(field => this.renderPerSealField(field, seal)).join('')}
+                </div>
+            `).join('')
+            return `<div class="cm-seal-groups-wrap">${groups}</div>`
+        }
+
+        renderPerSealField(field, seal) {
+            if (field.hideIfBts && Number(seal) > 1000000) return ''
+
+            const fieldId = `field-${field.id}-${seal}`
+            const datalistId = field.datalist ? `datalist-${field.id}-${seal}` : ''
+            const datalistAttr = datalistId ? `list="${datalistId}"` : ''
+            const datalistHtml = field.datalist
+                ? `<datalist id="${datalistId}">${field.datalist.map(v => `<option value="${v}">`).join('')}</datalist>`
+                : ''
+            const clearBtn = field.datalist
+                ? `<button type="button" class="cm-clear-btn cm-hidden" data-clear="${fieldId}">&times;</button>`
+                : ''
+            const datePickerBtn = field.withDatePicker
+                ? `<button type="button" class="cm-datepicker-btn" data-for="${fieldId}">&#128197;</button><input type="datetime-local" class="cm-datepicker-hidden" data-target="${fieldId}">`
+                : ''
+
+            return `
+                <div class="cm-form-group">
+                    <label class="cm-label">${field.label}${field.required ? ' *' : ''}</label>
+                    <div class="cm-input-wrap">
+                        <input type="text" class="cm-input cm-per-seal-input"
+                            id="${fieldId}"
+                            placeholder="${field.placeholder || ''}"
+                            ${datalistAttr}
+                            ${field.required ? 'required' : ''}>
+                        ${clearBtn}
+                        ${datePickerBtn}
+                    </div>
+                    ${datalistHtml}
+                </div>
+            `
         }
 
         renderRelatedSection(template) {
@@ -2741,8 +2966,26 @@
                 })
             }
 
+            // Чекбоксы выбора пломб
+            this.attachSealCheckListeners()
+
             this.overlay.appendChild(this.container)
             document.body.appendChild(this.overlay)
+        }
+
+        attachSealCheckListeners() {
+            this.container.querySelectorAll('.cm-seal-check').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    const checked = [...this.container.querySelectorAll('.cm-seal-check:checked')]
+                    if (checked.length === 0) { cb.checked = true; return }
+                    this.selectedSeals = checked.map(c => c.value)
+                    // Показ/скрытие per-seal групп
+                    this.container.querySelectorAll('.cm-seal-group').forEach(group => {
+                        group.classList.toggle('cm-hidden', !this.selectedSeals.includes(group.dataset.seal))
+                    })
+                    this.updatePreview()
+                })
+            })
         }
 
         // Проверяет, скрыто ли поле по условиям showIf/hideIf/etc.
@@ -2854,6 +3097,27 @@
                 }
             })
 
+            // Сбор per-seal значений
+            const perSealFields = template.fields.filter(f => f.perSeal)
+            if (perSealFields.length > 0 && pageData.sealNumbers.length > 1) {
+                this.sealFieldValues = {}
+                this.selectedSeals.forEach(seal => {
+                    this.sealFieldValues[seal] = {}
+                    perSealFields.forEach(field => {
+                        const el = this.container.querySelector(`#field-${field.id}-${seal}`)
+                        if (el) this.sealFieldValues[seal][field.id] = el.value
+                    })
+                })
+                pageData.sealFieldValues = this.sealFieldValues
+                pageData.selectedSeals = [...this.selectedSeals]
+            }
+
+            // Подмена sealNumber по выбранным пломбам
+            if (this.selectedSeals.length > 0) {
+                pageData.sealNumber = this.selectedSeals.join(', ')
+                pageData.isBts = this.selectedSeals.some(s => Number(s) > 1000000)
+            }
+
             const message = template.generate(pageData, this.fieldValues)
             const previewEl = this.container.querySelector('#cm-preview-text')
             if (previewEl) {
@@ -2901,12 +3165,20 @@
 
                 // Проверка required полей
                 if (field.required) {
-                    const value = this.fieldValues[field.id]
-                    if (!value || value.toString().trim() === '') {
-                        return false
-                    }
-                    if (field.minLength && value.toString().trim().length < field.minLength) {
-                        return false
+                    if (field.perSeal && pageData.sealNumbers.length > 1) {
+                        for (const seal of this.selectedSeals) {
+                            if (field.hideIfBts && Number(seal) > 1000000) continue
+                            const value = this.sealFieldValues?.[seal]?.[field.id]
+                            if (!value || value.toString().trim() === '') return false
+                        }
+                    } else {
+                        const value = this.fieldValues[field.id]
+                        if (!value || value.toString().trim() === '') {
+                            return false
+                        }
+                        if (field.minLength && value.toString().trim().length < field.minLength) {
+                            return false
+                        }
                     }
                 }
             }
@@ -3000,6 +3272,10 @@
 
         async copyForLetter() {
             const pageData = this.dataExtractor.extract()
+            if (this.selectedSeals.length > 0) {
+                pageData.sealNumber = this.selectedSeals.join(', ')
+                pageData.isBts = this.selectedSeals.some(s => Number(s) > 1000000)
+            }
             const sealLabel = pageData.isBts ? 'НП' : 'ЭНП'
 
             const text = [
@@ -3060,6 +3336,8 @@
             this.regulationType = null
             this.currentStatus = null
             this.currentIsBts = false
+            this.selectedSeals = []
+            this.sealFieldValues = {}
             this.lastOrderId = null
         }
 
@@ -3167,13 +3445,11 @@
 
         refreshPageData() {
             const pageData = this.dataExtractor.extract()
+            this.selectedSeals = [...pageData.sealNumbers]
             const dataInfo = this.container.querySelector('.cm-data-info')
             if (dataInfo) {
                 dataInfo.innerHTML = `
-                    <div class="cm-data-row">
-                        <span class="cm-data-label">ЭНП:</span>
-                        <span class="cm-data-value">${pageData.sealNumber}</span>
-                    </div>
+                    ${this.renderSealRow(pageData)}
                     <div class="cm-data-row">
                         <span class="cm-data-label">${this.regulationType === 'D7' ? 'Процедура:' : 'Тип перевозки:'}</span>
                         <span class="cm-data-value">${this.regulationType === 'D7' ? pageData.transportProcedure : pageData.transportType}</span>
@@ -3206,6 +3482,8 @@
                     </div>
                     `}
                 `
+                // Обработчики чекбоксов пломб после обновления DOM
+                this.attachSealCheckListeners()
             }
             // Обновляем предпросмотр с новыми данными
             this.updatePreview()
