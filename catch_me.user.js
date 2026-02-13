@@ -19,6 +19,9 @@
 //   feat: "была срезана" → "были срезаны" при 2+ выбранных пломбах
 //   feat: per-seal валидация required полей
 //   style: карточки пломб по 2 в ряд (flex-wrap grid)
+//   feat: IKTT-пломбы — скрытие ПО и температуры (hideIfBts + isNonCrcp)
+//   refactor: Д7 → "Д7 & Соглашение" в заголовке регуляции
+//   feat: перевозки KZ добавлены в автоопределение Д7
 //
 // 2.7.0
 //   feat: поддержка множественных ЭНП/НП — чекбоксы выбора пломб при 2+ на странице
@@ -1134,6 +1137,7 @@
                             label: 'Температура в телеметрии',
                             placeholder: 'например -24',
                             perSeal: true,
+                            hideIfBts: true,
                         },
                     ],
 
@@ -1144,6 +1148,8 @@
                         const sfv = data.sealFieldValues
                         const seals = data.selectedSeals || [data.sealNumber]
                         const isMulti = seals.length > 1
+                        const iktt = data.ikttSeals || []
+                        const isNonCrcp = s => Number(s) > 1000000 || iktt.includes(s)
 
                         const reasons = []
                         if (fields.reasonNoConnection) reasons.push('отсутствие связи')
@@ -1156,14 +1162,13 @@
                             ? data.deactivationPoint
                             : (fields.cuttingPlace || '▮▮▮')
 
-                        // ПО: comma-separated по порядку пломб
+                        // ПО: comma-separated, только для CRCP пломб
                         let fwLine = null
-                        if (!isBts) {
-                            if (sfv) {
-                                fwLine = `ПО: ${seals.map(s => sfv[s]?.firmwareVersion || '▮▮▮').join(', ')}`
-                            } else {
-                                fwLine = `ПО: ${fields.firmwareVersion || '▮▮▮'}`
-                            }
+                        if (sfv) {
+                            const fwParts = seals.filter(s => !isNonCrcp(s)).map(s => sfv[s]?.firmwareVersion || '▮▮▮')
+                            if (fwParts.length) fwLine = `ПО: ${fwParts.join(', ')}`
+                        } else if (!isNonCrcp(seals[0])) {
+                            fwLine = `ПО: ${fields.firmwareVersion || '▮▮▮'}`
                         }
 
                         // Per-seal блоки lastConnection + telemetryTemperature
@@ -1174,14 +1179,14 @@
                                 const sv = sfv[s] || {}
                                 const connStr = Utils.formatDateTime(sv.lastConnection)
                                 perSealLines.push(`${isMulti ? s + ' ' : ''}Последний выход на связь: ${connStr}`)
-                                if (/\d/.test(sv.telemetryTemperature || '')) {
+                                if (!isNonCrcp(s) && /\d/.test(sv.telemetryTemperature || '')) {
                                     perSealLines.push(`Температура в последней телеметрии: ${sv.telemetryTemperature.trim()}°`)
                                 }
                             })
                         } else {
                             const lastConnStr = Utils.formatDateTime(fields.lastConnection)
                             perSealLines.push(`Последний выход на связь: ${lastConnStr}`)
-                            if (/\d/.test(fields.telemetryTemperature || '')) {
+                            if (!isNonCrcp(seals[0]) && /\d/.test(fields.telemetryTemperature || '')) {
                                 perSealLines.push(`Температура в последней телеметрии: ${fields.telemetryTemperature.trim()}°`)
                             }
                         }
@@ -1191,7 +1196,7 @@
 
                         return [
                             `@IvanB0`,
-                            `Дежурный Оператор 1 ЦУиМ`,
+                            `@CUIM_spec1`,
                             ``,
                             `Оператором согласовано срезание ${sealLabel} ${data.sealNumber} ${orgLabel} в ${fields.territory || '▮▮▮'}`,
                             `по причине: ${reasons.length ? reasons.join(', ') : '▮▮▮'}`,
@@ -1323,6 +1328,8 @@
                         const sfv = data.sealFieldValues
                         const seals = data.selectedSeals || [data.sealNumber]
                         const isMulti = seals.length > 1
+                        const iktt = data.ikttSeals || []
+                        const isNonCrcp = s => Number(s) > 1000000 || iktt.includes(s)
 
                         const reasons = []
                         if (fields.reasonNoConnection) reasons.push('отсутствие связи')
@@ -1335,14 +1342,13 @@
                             ? data.deactivationPoint
                             : (fields.cuttingPlace || '▮▮▮')
 
-                        // ПО: comma-separated по порядку пломб
+                        // ПО: comma-separated, только для CRCP пломб
                         let fwLine = null
-                        if (!isBts) {
-                            if (sfv) {
-                                fwLine = `ПО: ${seals.map(s => sfv[s]?.firmwareVersion || '▮▮▮').join(', ')}`
-                            } else {
-                                fwLine = `ПО: ${fields.firmwareVersion || '▮▮▮'}`
-                            }
+                        if (sfv) {
+                            const fwParts = seals.filter(s => !isNonCrcp(s)).map(s => sfv[s]?.firmwareVersion || '▮▮▮')
+                            if (fwParts.length) fwLine = `ПО: ${fwParts.join(', ')}`
+                        } else if (!isNonCrcp(seals[0])) {
+                            fwLine = `ПО: ${fields.firmwareVersion || '▮▮▮'}`
                         }
 
                         // Per-seal lastConnection
@@ -1442,10 +1448,11 @@
 
     class DataExtractor {
         extract() {
-            const sealNumbers = this.getSealNumbers()
+            const { numbers: sealNumbers, ikttSeals } = this.getSealNumbers()
             return {
                 sealNumber: sealNumbers[0],
                 sealNumbers,
+                ikttSeals,
                 isBts: Number(sealNumbers[0]) > 1000000,
                 transportType: this.getTransportType(),
                 transportStatus: this.getTransportStatus(),
@@ -1465,11 +1472,16 @@
         getSealNumbers() {
             const els = document.querySelectorAll('div[data-title="Арендуемые ЭНП"] span')
             const numbers = []
+            const ikttSeals = []
             els.forEach(el => {
-                const match = el.textContent.match(/SN:\s*0*(\d+)/)
-                if (match) numbers.push(match[1])
+                const text = el.textContent
+                const match = text.match(/SN:\s*0*(\d+)/)
+                if (match) {
+                    numbers.push(match[1])
+                    if (/\(IKTT\)/i.test(text)) ikttSeals.push(match[1])
+                }
             })
-            return numbers.length ? numbers : ['▮▮▮']
+            return { numbers: numbers.length ? numbers : ['▮▮▮'], ikttSeals }
         }
 
         getTransportType() {
@@ -1580,7 +1592,7 @@
         getRegulationType() {
             const orderNumber = this.getOrderNumber()
             if (orderNumber.startsWith('ST/')) return 'PP1877'
-            if (/^(EV\/|ET\/|BY_)/.test(orderNumber)) return 'D7'
+            if (/^(EV\/|ET\/|BY_|KZ)/.test(orderNumber)) return 'D7'
             return 'PP1877'
         }
     }
@@ -1603,9 +1615,15 @@
             this.dataExtractor = new DataExtractor()
             this.selectedSeals = []
             this.sealFieldValues = {}
+            this.ikttSeals = []
             this.navigationStack = [] // История навигации для кнопки "Назад"
             this.lastOrderId = null // ID перевозки при открытии формы
             this.urlWatchInterval = null
+        }
+
+        // Пломба не CRCP (БТС или IKTT) — скрываем ПО и температуру
+        isNonCrcp(seal) {
+            return Number(seal) > 1000000 || this.ikttSeals.includes(seal)
         }
 
         // Извлекает ID перевозки из URL: /orders/item/{ID}/...
@@ -2367,7 +2385,7 @@
             this.currentCategory = null
             this.currentTemplate = null
 
-            const regulation = this.regulationType === 'D7' ? 'Д7' : 'ПП1877'
+            const regulation = this.regulationType === 'D7' ? 'Д7 & Соглашение' : 'ПП1877'
 
             this.createModal({
                 title: `Выберите категорию по ${regulation}`,
@@ -2419,7 +2437,7 @@
                 restore: () => this.showCategories(),
             })
 
-            const regulation = this.regulationType === 'D7' ? 'Д7' : 'ПП1877'
+            const regulation = this.regulationType === 'D7' ? 'Д7 & Соглашение' : 'ПП1877'
 
             this.createModal({
                 title: this.currentCategory.name,
@@ -2479,6 +2497,7 @@
             const template = this.currentRelatedTemplate || this.currentTemplate
             const pageData = this.dataExtractor.extract()
             this.selectedSeals = [...pageData.sealNumbers]
+            this.ikttSeals = [...pageData.ikttSeals]
 
             // Сохраняем текущее состояние для навигации
             this.navigationStack.push({
@@ -2493,7 +2512,7 @@
 
             // Сброс значений полей
             this.currentStatus = pageData.transportStatus
-            this.currentIsBts = pageData.isBts
+            this.currentIsNonCrcp = pageData.isBts || pageData.ikttSeals.includes(pageData.sealNumber)
             this.fieldValues = {}
             template.fields.forEach((field) => {
                 // Не устанавливаем default для полей скрытых по showIfStatus
@@ -2757,7 +2776,7 @@
         }
 
         renderPerSealField(field, seal) {
-            if (field.hideIfBts && Number(seal) > 1000000) return ''
+            if (field.hideIfBts && this.isNonCrcp(seal)) return ''
 
             const fieldId = `field-${field.id}-${seal}`
             const datalistId = field.datalist ? `datalist-${field.id}-${seal}` : ''
@@ -2991,7 +3010,7 @@
         // Проверяет, скрыто ли поле по условиям showIf/hideIf/etc.
         isFieldHidden(field) {
             let hidden = false
-            if (field.hideIfBts && this.currentIsBts) return true
+            if (field.hideIfBts && this.currentIsNonCrcp) return true
             if (field.hideIfStatuses && this.currentStatus && field.hideIfStatuses.includes(this.currentStatus)) return true
             if (field.showIf && !this.fieldValues[field.showIf]) hidden = true
             if (field.showIfValue) {
@@ -3167,7 +3186,7 @@
                 if (field.required) {
                     if (field.perSeal && pageData.sealNumbers.length > 1) {
                         for (const seal of this.selectedSeals) {
-                            if (field.hideIfBts && Number(seal) > 1000000) continue
+                            if (field.hideIfBts && this.isNonCrcp(seal)) continue
                             const value = this.sealFieldValues?.[seal]?.[field.id]
                             if (!value || value.toString().trim() === '') return false
                         }
@@ -3335,9 +3354,10 @@
             this.currentRelatedTemplate = null
             this.regulationType = null
             this.currentStatus = null
-            this.currentIsBts = false
+            this.currentIsNonCrcp = false
             this.selectedSeals = []
             this.sealFieldValues = {}
+            this.ikttSeals = []
             this.lastOrderId = null
         }
 
@@ -3446,6 +3466,7 @@
         refreshPageData() {
             const pageData = this.dataExtractor.extract()
             this.selectedSeals = [...pageData.sealNumbers]
+            this.ikttSeals = [...pageData.ikttSeals]
             const dataInfo = this.container.querySelector('.cm-data-info')
             if (dataInfo) {
                 dataInfo.innerHTML = `
