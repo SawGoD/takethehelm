@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.8.0
+// @version      2.8.1
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=crcp.ru
+// @updateURL      https://raw.githubusercontent.com/SawGoD/takethehelm/main/catch_me.user.js
+// @downloadURL    https://raw.githubusercontent.com/SawGoD/takethehelm/main/catch_me.user.js
 // @grant        GM_info
 // ==/UserScript==
 
