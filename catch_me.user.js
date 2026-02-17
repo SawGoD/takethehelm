@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.8.2
+// @version      2.8.3
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
@@ -869,7 +869,7 @@
                             label: 'Территория нахождения',
                             placeholder: 'Например: РФ',
                             required: true,
-                            datalist: ['РФ', 'РБ'],
+                            datalist: ['РФ', 'РБ', 'РК', 'КР'],
                         },
                         {
                             id: 'frequency',
@@ -1021,7 +1021,7 @@
                             id: 'territory',
                             type: 'text',
                             label: 'Территория',
-                            datalist: ['РФ', 'РБ'],
+                            datalist: ['РФ', 'РБ', 'РК', 'КР'],
                             required: true,
                             halfWidth: true,
                         },
