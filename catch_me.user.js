@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.11.0
+// @version      2.11.1
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/*
@@ -12,6 +12,9 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.11.1
+//   fix: тег для чата — префикс Д7/СЕ определяется из процедуры перевозки, а не номера
 //
 // 2.11.0
 //   refactor: SEAL_TYPES — расширяемый маппинг типов пломб (orgLabel, agreedWith)
@@ -1464,9 +1467,9 @@
         },
 
         // Сформировать тег для чата (СЕ:ТТ, Д7:ВТ, ...)
-        getChatTag(orderNumber, transportProcedure) {
-            const prefix = /^BY_/.test(orderNumber) ? 'Д7' : 'СЕ'
+        getChatTag(transportProcedure) {
             const proc = (transportProcedure || '').trim()
+            const prefix = /Декрет/i.test(proc) ? 'Д7' : 'СЕ'
             let suffix = '▮▮▮'
             if (/Таможенный транзит/i.test(proc)) suffix = 'ТТ'
             else if (/Взаимная торговля/i.test(proc)) suffix = 'ВТ'
@@ -3387,7 +3390,7 @@
 
         async copyChatTag() {
             const pageData = this.dataExtractor.extract()
-            const tag = Utils.getChatTag(pageData.orderNumber, pageData.transportProcedure)
+            const tag = Utils.getChatTag(pageData.transportProcedure)
 
             const sealType = Utils.getSealType(pageData.sealNumbers, pageData.ikttSeals)
             const sealLabel = sealType === SEAL_TYPES.CRCP ? 'ЭНП' : 'НП'
