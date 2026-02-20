@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.9.3
+// @version      2.11.0
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
-// @match        https://sa.transit.crcp.ru/orders/item/*/view
+// @match        https://sa.transit.crcp.ru/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=crcp.ru
 // @grant        GM_info
 // ==/UserScript==
@@ -12,6 +12,16 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.11.0
+//   refactor: SEAL_TYPES — расширяемый маппинг типов пломб (orgLabel, agreedWith)
+//   refactor: Utils.getSealType() — определение типа по выбранным пломбам
+//   feat: IKTT → "ИКТТ" + "Согласовано с РК", BTS → "БТС" + "Согласовано с РБ"
+//   refactor: убраны inline-костыли isBts/orgLabel/allIktt из generate()
+//
+// 2.10.0
+//   feat: IKTT-пломбы — orgLabel "ИКТТ" вместо "БТС" в согласованном срезании
+//   feat: "Срезание согласовано с {территория}" вместо хардкода "РБ"
 //
 // 2.9.3
 //   fix: тег для чата — поиск процедуры по подстроке вместо точного совпадения
@@ -166,6 +176,13 @@
     // Как добавить связанное сообщение:
     // 1. Добавить в relatedTemplates шаблона
     // ========================================
+
+    // Типы пломб: orgLabel — организация, agreedWith — страна согласования срезания
+    const SEAL_TYPES = {
+        IKTT:  { orgLabel: 'ИКТТ', agreedWith: 'РК' },
+        BTS:   { orgLabel: 'БТС',  agreedWith: 'РБ' },
+        CRCP:  { orgLabel: 'ЦРЦП', agreedWith: null },
+    }
 
     // Известные версии ПО
     const FIRMWARE_VERSIONS = [
@@ -1155,14 +1172,13 @@
                     ],
 
                     generate(data, fields) {
-                        const isBts = data.isBts
-                        const sealLabel = isBts ? 'НП' : 'ЭНП'
-                        const orgLabel = isBts ? 'БТС' : 'ЦРЦП'
                         const sfv = data.sealFieldValues
                         const seals = data.selectedSeals || [data.sealNumber]
                         const isMulti = seals.length > 1
                         const iktt = data.ikttSeals || []
                         const isNonCrcp = s => Number(s) > 1000000 || iktt.includes(s)
+                        const sealType = Utils.getSealType(seals, iktt)
+                        const sealLabel = sealType === SEAL_TYPES.CRCP ? 'ЭНП' : 'НП'
 
                         const reasons = []
                         if (fields.reasonNoConnection) reasons.push('отсутствие связи')
@@ -1211,7 +1227,7 @@
                             `@IvanB0`,
                             `@CUIM_spec1`,
                             ``,
-                            `Оператором согласовано срезание ${sealLabel} ${data.sealNumber} ${orgLabel} в ${fields.territory || '▮▮▮'}`,
+                            `Оператором согласовано срезание ${sealLabel} ${data.sealNumber} ${sealType.orgLabel} в ${fields.territory || '▮▮▮'}`,
                             `по причине: ${reasons.length ? reasons.join(', ') : '▮▮▮'}`,
                             ``,
                             `Тип перевозок: ${data.transportProcedure}`,
@@ -1227,8 +1243,8 @@
                             `Место срезания: ${cuttingPlace}`,
                             ``,
                             (fields.actions || '').trim() ? fields.actions.trim() : null,
-                            isBts ? `Срезание согласовано с РБ.` : null,
-                            (fields.actions || '').trim() || isBts ? `` : null,
+                            sealType.agreedWith ? `Срезание согласовано с ${sealType.agreedWith}.` : null,
+                            (fields.actions || '').trim() || sealType.agreedWith ? `` : null,
                             ...perSealLines,
                             ``,
                             `${sealLabel} ${data.sealNumber} ${cutVerb}`,
@@ -1431,6 +1447,15 @@
             const template = this.getTemplate(regulationType, categoryId, templateId)
             if (!template || !template.relatedTemplates) return null
             return template.relatedTemplates[relatedId] || null
+        },
+
+        // Определить тип пломбы по выбранным пломбам
+        getSealType(seals, ikttSeals) {
+            const allIktt = seals.length > 0 && seals.every(s => ikttSeals.includes(s))
+            if (allIktt) return SEAL_TYPES.IKTT
+            const allBts = seals.length > 0 && seals.every(s => Number(s) > 1000000)
+            if (allBts) return SEAL_TYPES.BTS
+            return SEAL_TYPES.CRCP
         },
 
         // Проверить есть ли связанные шаблоны
@@ -3364,9 +3389,12 @@
             const pageData = this.dataExtractor.extract()
             const tag = Utils.getChatTag(pageData.orderNumber, pageData.transportProcedure)
 
+            const sealType = Utils.getSealType(pageData.sealNumbers, pageData.ikttSeals)
+            const sealLabel = sealType === SEAL_TYPES.CRCP ? 'ЭНП' : 'НП'
+
             const text = [
                 `Перевозка: ${pageData.orderNumber} - ${tag}`,
-                `ЭНП: ${pageData.sealNumber}`,
+                `${sealLabel}: ${pageData.sealNumber}`,
                 `ТС: ${pageData.mainVehicleNumber}`,
             ].join('\n')
 
