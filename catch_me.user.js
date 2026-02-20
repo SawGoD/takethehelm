@@ -1,19 +1,30 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.8.3
+// @version      2.9.3
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/orders/item/*/view
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=crcp.ru
-// @updateURL      https://raw.githubusercontent.com/SawGoD/takethehelm/main/catch_me.user.js
-// @downloadURL    https://raw.githubusercontent.com/SawGoD/takethehelm/main/catch_me.user.js
 // @grant        GM_info
 // ==/UserScript==
 
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.9.3
+//   fix: тег для чата — поиск процедуры по подстроке вместо точного совпадения
+//
+// 2.9.2
+//   style: кнопка "Тег для чата" перенесена в footer модалки
+//
+// 2.9.1
+//   feat: территории РК и КР добавлены в datalist выбора территории
+//
+// 2.9.0
+//   feat: кнопка "Тег для чата" на экране категорий Д7 & Соглашение
+//   feat: копирование тега (СЕ:ТТ/СЕ:ВТ/Д7:ТТ/...) с перевозкой, ЭНП и ТС в буфер обмена
 //
 // 2.8.0
 //   feat: per-seal поля (ПО, связь, температура) для множественных пломб в срезании
@@ -1235,7 +1246,7 @@
                             id: 'territory',
                             type: 'text',
                             label: 'Территория',
-                            datalist: ['РФ', 'РБ'],
+                            datalist: ['РФ', 'РБ', 'РК', 'КР'],
                             required: true,
                             halfWidth: true,
                         },
@@ -1425,6 +1436,17 @@
         // Проверить есть ли связанные шаблоны
         hasRelatedTemplates(template) {
             return template.relatedTemplates && Object.keys(template.relatedTemplates).length > 0
+        },
+
+        // Сформировать тег для чата (СЕ:ТТ, Д7:ВТ, ...)
+        getChatTag(orderNumber, transportProcedure) {
+            const prefix = /^BY_/.test(orderNumber) ? 'Д7' : 'СЕ'
+            const proc = (transportProcedure || '').trim()
+            let suffix = '▮▮▮'
+            if (/Таможенный транзит/i.test(proc)) suffix = 'ТТ'
+            else if (/Взаимная торговля/i.test(proc)) suffix = 'ВТ'
+            else if (/Экспорт/i.test(proc)) suffix = 'Экспорт'
+            return `${prefix}:${suffix}`
         },
 
         // Парсинг даты из разных форматов → DD.MM.YYYY HH:MM
@@ -2389,10 +2411,15 @@
 
             const regulation = this.regulationType === 'D7' ? 'Д7 & Соглашение' : 'ПП1877'
 
+            const footer = this.regulationType === 'D7'
+                ? '<button type="button" class="cm-btn cm-btn-secondary" id="cm-chat-tag">Тег для чата</button>'
+                : ''
+
             this.createModal({
                 title: `Выберите категорию по ${regulation}`,
                 showBack: false,
                 body: this.renderCategoriesList(),
+                footer,
             })
         }
 
@@ -2883,6 +2910,12 @@
             this.container.querySelector('.cm-close').addEventListener('click', () => this.close())
             this.container.querySelector('.cm-minimize').addEventListener('click', () => this.minimize())
 
+            // Тег для чата
+            const chatTagBtn = this.container.querySelector('#cm-chat-tag')
+            if (chatTagBtn) {
+                chatTagBtn.addEventListener('click', () => this.copyChatTag())
+            }
+
             // Категории
             this.container.querySelectorAll('[data-category]').forEach((item) => {
                 item.addEventListener('click', () => {
@@ -3312,6 +3345,32 @@
             ].join('\n')
 
             const btn = this.container.querySelector('#cm-copy-letter')
+            try {
+                await navigator.clipboard.writeText(text)
+                this.showCopySuccess(btn)
+            } catch (err) {
+                const textarea = document.createElement('textarea')
+                textarea.value = text
+                textarea.style.cssText = 'position:fixed;opacity:0'
+                document.body.appendChild(textarea)
+                textarea.select()
+                document.execCommand('copy')
+                document.body.removeChild(textarea)
+                this.showCopySuccess(btn)
+            }
+        }
+
+        async copyChatTag() {
+            const pageData = this.dataExtractor.extract()
+            const tag = Utils.getChatTag(pageData.orderNumber, pageData.transportProcedure)
+
+            const text = [
+                `Перевозка: ${pageData.orderNumber} - ${tag}`,
+                `ЭНП: ${pageData.sealNumber}`,
+                `ТС: ${pageData.mainVehicleNumber}`,
+            ].join('\n')
+
+            const btn = this.container.querySelector('#cm-chat-tag')
             try {
                 await navigator.clipboard.writeText(text)
                 this.showCopySuccess(btn)
