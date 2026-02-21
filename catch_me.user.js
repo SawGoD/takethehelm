@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.11.1
+// @version      2.11.2
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/*
@@ -12,6 +12,9 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.11.2
+//   feat: перевозки EE/ добавлены в автоопределение Д7
 //
 // 2.11.1
 //   fix: тег для чата — префикс Д7/СЕ определяется из процедуры перевозки, а не номера
@@ -1644,7 +1647,7 @@
         getRegulationType() {
             const orderNumber = this.getOrderNumber()
             if (orderNumber.startsWith('ST/')) return 'PP1877'
-            if (/^(EV\/|ET\/|BY_|KZ)/.test(orderNumber)) return 'D7'
+            if (/^(EV\/|ET\/|EE\/|BY_|KZ)/.test(orderNumber)) return 'D7'
             return 'PP1877'
         }
     }
