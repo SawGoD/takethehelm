@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.11.2
+// @version      2.12.0
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/*
@@ -12,6 +12,11 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.12.0
+//   feat: "Тег для чата" — мини-форма с выбором Процедуры и пломб (если несколько)
+//   feat: предпросмотр тега в реальном времени
+//   feat: умолчание Процедуры зависит от статуса перевозки
 //
 // 2.11.2
 //   feat: перевозки EE/ добавлены в автоопределение Д7
@@ -2486,6 +2491,127 @@
             `
         }
 
+        // ========== Экран: Тег для чата ==========
+
+        showChatTagForm() {
+            const pageData = this.dataExtractor.extract()
+            this.selectedSeals = [...pageData.sealNumbers]
+            this.ikttSeals = [...pageData.ikttSeals]
+            this.currentCategory = null
+            this.currentTemplate = null
+
+            const finishedStatuses = ['Деактивирована', 'Распломбирована', 'Завершена']
+            const defaultProcedure = finishedStatuses.includes(pageData.transportStatus)
+                ? 'Завершение'
+                : 'Промежуточное размыкание'
+
+            this.navigationStack.push({ restore: () => this.showCategories() })
+
+            this.createModal({
+                title: 'Тег для чата',
+                subtitle: Utils.getChatTag(pageData.transportProcedure),
+                showBack: true,
+                body: this.renderChatTagForm(pageData, defaultProcedure),
+                footer: `
+                    <button type="button" class="cm-btn cm-btn-secondary" id="cm-back">Назад</button>
+                    <button type="button" class="cm-btn cm-btn-primary" id="cm-copy-chat-tag">Копировать</button>
+                `,
+            })
+
+            this.updateChatTagPreview(pageData)
+
+            // Обновление превью при смене процедуры
+            this.container.querySelectorAll('input[name="cm-tag-procedure"]').forEach(r => {
+                r.addEventListener('change', () => this.updateChatTagPreview(pageData))
+            })
+
+            // Обновление превью при смене пломб (selectedSeals уже обновлены attachSealCheckListeners)
+            this.container.querySelectorAll('.cm-seal-check').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    const checked = [...this.container.querySelectorAll('.cm-seal-check:checked')]
+                    if (checked.length > 0) this.selectedSeals = checked.map(c => c.value)
+                    this.updateChatTagPreview(pageData)
+                })
+            })
+
+            // Кнопка копирования
+            const copyBtn = this.container.querySelector('#cm-copy-chat-tag')
+            if (copyBtn) {
+                copyBtn.addEventListener('click', async () => {
+                    const text = this.buildChatTagText(pageData)
+                    try {
+                        await navigator.clipboard.writeText(text)
+                    } catch {
+                        const ta = document.createElement('textarea')
+                        ta.value = text
+                        ta.style.cssText = 'position:fixed;opacity:0'
+                        document.body.appendChild(ta)
+                        ta.select()
+                        document.execCommand('copy')
+                        document.body.removeChild(ta)
+                    }
+                    this.showCopySuccess(copyBtn)
+                })
+            }
+        }
+
+        renderChatTagForm(pageData, defaultProcedure) {
+            const sealSection = pageData.sealNumbers.length > 1 ? `
+                <div class="cm-form-group">
+                    <label class="cm-label">Пломбы</label>
+                    <div class="cm-seal-selector">
+                        ${pageData.sealNumbers.map(num =>
+                            `<label class="cm-seal-option"><input type="checkbox" class="cm-seal-check" value="${num}" checked> ${num}</label>`
+                        ).join('')}
+                    </div>
+                </div>
+            ` : ''
+
+            return `
+                ${sealSection}
+                <div class="cm-form-group">
+                    <label class="cm-label">Процедура</label>
+                    <div class="cm-radio-group">
+                        <label class="cm-radio-label">
+                            <input type="radio" class="cm-radio" name="cm-tag-procedure" value="Промежуточное размыкание" ${defaultProcedure === 'Промежуточное размыкание' ? 'checked' : ''}>
+                            Промежуточное размыкание
+                        </label>
+                        <label class="cm-radio-label">
+                            <input type="radio" class="cm-radio" name="cm-tag-procedure" value="Завершение" ${defaultProcedure === 'Завершение' ? 'checked' : ''}>
+                            Завершение
+                        </label>
+                    </div>
+                </div>
+                <div class="cm-preview">
+                    <div class="cm-preview-title">Предпросмотр</div>
+                    <div id="cm-chat-tag-preview" class="cm-preview-text"></div>
+                </div>
+            `
+        }
+
+        buildChatTagText(pageData) {
+            const tag = Utils.getChatTag(pageData.transportProcedure)
+            const seals = this.selectedSeals.length > 0 ? this.selectedSeals : pageData.sealNumbers
+            const sealType = Utils.getSealType(seals, pageData.ikttSeals)
+            const sealLabel = sealType === SEAL_TYPES.CRCP ? 'ЭНП' : 'НП'
+            const sealNumber = seals.join(', ')
+            const procedure = this.container?.querySelector('input[name="cm-tag-procedure"]:checked')?.value
+                || 'Промежуточное размыкание'
+
+            return [
+                `Перевозка: ${pageData.orderNumber} - ${tag}`,
+                `Процедура: ${procedure}`,
+                `${sealLabel}: ${sealNumber}`,
+                `ТС: ${pageData.mainVehicleNumber}`,
+            ].join('\n')
+        }
+
+        updateChatTagPreview(pageData) {
+            const previewEl = this.container?.querySelector('#cm-chat-tag-preview')
+            if (!previewEl) return
+            previewEl.textContent = this.buildChatTagText(pageData)
+        }
+
         // ========== Экран: Список шаблонов в категории ==========
 
         showTemplates(categoryId) {
@@ -2944,7 +3070,7 @@
             // Тег для чата
             const chatTagBtn = this.container.querySelector('#cm-chat-tag')
             if (chatTagBtn) {
-                chatTagBtn.addEventListener('click', () => this.copyChatTag())
+                chatTagBtn.addEventListener('click', () => this.showChatTagForm())
             }
 
             // Категории
@@ -3376,35 +3502,6 @@
             ].join('\n')
 
             const btn = this.container.querySelector('#cm-copy-letter')
-            try {
-                await navigator.clipboard.writeText(text)
-                this.showCopySuccess(btn)
-            } catch (err) {
-                const textarea = document.createElement('textarea')
-                textarea.value = text
-                textarea.style.cssText = 'position:fixed;opacity:0'
-                document.body.appendChild(textarea)
-                textarea.select()
-                document.execCommand('copy')
-                document.body.removeChild(textarea)
-                this.showCopySuccess(btn)
-            }
-        }
-
-        async copyChatTag() {
-            const pageData = this.dataExtractor.extract()
-            const tag = Utils.getChatTag(pageData.transportProcedure)
-
-            const sealType = Utils.getSealType(pageData.sealNumbers, pageData.ikttSeals)
-            const sealLabel = sealType === SEAL_TYPES.CRCP ? 'ЭНП' : 'НП'
-
-            const text = [
-                `Перевозка: ${pageData.orderNumber} - ${tag}`,
-                `${sealLabel}: ${pageData.sealNumber}`,
-                `ТС: ${pageData.mainVehicleNumber}`,
-            ].join('\n')
-
-            const btn = this.container.querySelector('#cm-chat-tag')
             try {
                 await navigator.clipboard.writeText(text)
                 this.showCopySuccess(btn)
