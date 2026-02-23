@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.12.1
+// @version      2.12.2
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/*
@@ -12,6 +12,10 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.12.2
+//   feat: тег для чата — процедура "Не указано" → строка "Статус: {статус}" вместо "Процедура:"
+//   feat: умолчание "Не указано" для нераспознанных статусов перевозки
 //
 // 2.12.1
 //   fix: дублирующиеся номера пломб на странице сжимаются до уникальных
@@ -2507,9 +2511,15 @@
             this.currentTemplate = null
 
             const finishedStatuses = ['Деактивирована', 'Распломбирована', 'Завершена']
-            const defaultProcedure = finishedStatuses.includes(pageData.transportStatus)
-                ? 'Завершение'
-                : 'Промежуточное размыкание'
+            const activeStatuses = ['Активирована']
+            let defaultProcedure
+            if (finishedStatuses.includes(pageData.transportStatus)) {
+                defaultProcedure = 'Завершение'
+            } else if (activeStatuses.includes(pageData.transportStatus)) {
+                defaultProcedure = 'Промежуточное размыкание'
+            } else {
+                defaultProcedure = 'Не указано'
+            }
 
             this.navigationStack.push({ restore: () => this.showCategories() })
 
@@ -2586,6 +2596,10 @@
                             <input type="radio" class="cm-radio" name="cm-tag-procedure" value="Завершение" ${defaultProcedure === 'Завершение' ? 'checked' : ''}>
                             Завершение
                         </label>
+                        <label class="cm-radio-label">
+                            <input type="radio" class="cm-radio" name="cm-tag-procedure" value="Не указано" ${defaultProcedure === 'Не указано' ? 'checked' : ''}>
+                            Не указано
+                        </label>
                     </div>
                 </div>
                 <div class="cm-preview">
@@ -2602,11 +2616,16 @@
             const sealLabel = sealType === SEAL_TYPES.CRCP ? 'ЭНП' : 'НП'
             const sealNumber = seals.join(', ')
             const procedure = this.container?.querySelector('input[name="cm-tag-procedure"]:checked')?.value
-                || 'Промежуточное размыкание'
+                || 'Не указано'
+
+            // При "Не указано" — показываем статус перевозки вместо процедуры
+            const procedureLine = procedure === 'Не указано'
+                ? `Статус: ${pageData.transportStatus || '▮▮▮'}`
+                : `Процедура: ${procedure}`
 
             return [
                 `Перевозка: ${pageData.orderNumber} - ${tag}`,
-                `Процедура: ${procedure}`,
+                procedureLine,
                 `${sealLabel}: ${sealNumber}`,
                 `ТС: ${pageData.mainVehicleNumber}`,
             ].join('\n')
