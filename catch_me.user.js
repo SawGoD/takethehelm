@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.12.0
+// @version      2.12.1
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/*
@@ -12,6 +12,9 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.12.1
+//   fix: дублирующиеся номера пломб на странице сжимаются до уникальных
 //
 // 2.12.0
 //   feat: "Тег для чата" — мини-форма с выбором Процедуры и пломб (если несколько)
@@ -1541,7 +1544,10 @@
                     if (/\(IKTT\)/i.test(text)) ikttSeals.push(match[1])
                 }
             })
-            return { numbers: numbers.length ? numbers : ['▮▮▮'], ikttSeals }
+            // Убираем дубликаты (одна пломба может встречаться несколько раз на странице)
+            const uniqueNumbers = [...new Set(numbers)]
+            const uniqueIktt = [...new Set(ikttSeals)]
+            return { numbers: uniqueNumbers.length ? uniqueNumbers : ['▮▮▮'], ikttSeals: uniqueIktt }
         }
 
         getTransportType() {
