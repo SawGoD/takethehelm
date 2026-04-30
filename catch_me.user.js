@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Catch Me - Генератор сообщений
 // @namespace    http://tampermonkey.net/
-// @version      2.12.2
+// @version      2.15.0
 // @description  Генерация сообщений о нарушениях для чата
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/*
@@ -12,6 +12,26 @@
 // ========================================
 // CHANGELOG
 // ========================================
+//
+// 2.15.0
+//   feat: флаг template.disabled — шаблон в списке гасится и не открывается
+//   feat: "Не согласовано срезание" временно disabled (включить — убрать `disabled: true`)
+//
+// 2.14.1
+//   refactor: радио ЦРЦП/БТС/ГПТИ/ИКТТ встроено в блок чекбокса "Согласовано только" (inlineRadio)
+//   style: радио всегда видимы; при неактивном чекбоксе — opacity 0.4 + pointer-events:none
+//
+// 2.14.0
+//   feat: чекбокс "Согласовано только" с выбором ЦРЦП/БТС/ГПТИ/ИКТТ — заменяет
+//         "Срезание согласовано с {agreedWith}." на "Срезание согласовано {org} в одностороннем порядке."
+//   style: пустая строка перед "Срезание согласовано с …" в сообщении
+//   style: highlightColor 'shimmer' — мягкий блик, оранжевый по умолчанию, синий когда выбрано
+//   style: чекбокс "Присутствие Агента" использует режим shimmer
+//
+// 2.13.0
+//   feat: GPTI-пломбы — orgLabel "ГПТИ", "Срезание согласовано с КР"
+//   feat: getSealNumbers() — детектирует GPTI по маркеру (GPTI), отдаёт gptiSeals
+//   feat: GPTI считается non-CRCP — sealLabel "НП", скрытие ПО и температуры
 //
 // 2.12.2
 //   feat: тег для чата — процедура "Не указано" → строка "Статус: {статус}" вместо "Процедура:"
@@ -198,6 +218,7 @@
     // Типы пломб: orgLabel — организация, agreedWith — страна согласования срезания
     const SEAL_TYPES = {
         IKTT:  { orgLabel: 'ИКТТ', agreedWith: 'РК' },
+        GPTI:  { orgLabel: 'ГПТИ', agreedWith: 'КР' },
         BTS:   { orgLabel: 'БТС',  agreedWith: 'РБ' },
         CRCP:  { orgLabel: 'ЦРЦП', agreedWith: null },
     }
@@ -1087,7 +1108,7 @@
                             label: 'Присутствие Агента',
                             default: false,
                             highlight: true,
-                            highlightColor: 'blue',
+                            highlightColor: 'shimmer',
                         },
                         { id: 'reasonLabel', type: 'label', label: 'Причина', requiredOneOf: ['reasonNoConnection', 'reasonEnpFault', 'reasonBatteryDrain', 'reasonLockFault'] },
                         {
@@ -1180,6 +1201,24 @@
                             minLength: 6,
                         },
                         {
+                            id: 'unilateral',
+                            type: 'checkbox',
+                            label: 'Согласовано только',
+                            default: false,
+                            highlight: true,
+                            highlightColor: 'red',
+                            inlineRadio: {
+                                id: 'unilateralOrg',
+                                options: [
+                                    { value: 'ЦРЦП', label: 'ЦРЦП' },
+                                    { value: 'БТС',  label: 'БТС' },
+                                    { value: 'ГПТИ', label: 'ГПТИ' },
+                                    { value: 'ИКТТ', label: 'ИКТТ' },
+                                ],
+                                default: 'ЦРЦП',
+                            },
+                        },
+                        {
                             id: 'telemetryTemperature',
                             type: 'text',
                             label: 'Температура в телеметрии',
@@ -1194,8 +1233,9 @@
                         const seals = data.selectedSeals || [data.sealNumber]
                         const isMulti = seals.length > 1
                         const iktt = data.ikttSeals || []
-                        const isNonCrcp = s => Number(s) > 1000000 || iktt.includes(s)
-                        const sealType = Utils.getSealType(seals, iktt)
+                        const gpti = data.gptiSeals || []
+                        const isNonCrcp = s => Number(s) > 1000000 || iktt.includes(s) || gpti.includes(s)
+                        const sealType = Utils.getSealType(seals, iktt, gpti)
                         const sealLabel = sealType === SEAL_TYPES.CRCP ? 'ЭНП' : 'НП'
 
                         const reasons = []
@@ -1241,6 +1281,11 @@
                         // "была срезана" → "были срезаны"
                         const cutVerb = isMulti ? 'были срезаны' : 'была срезана'
 
+                        const actionsText = (fields.actions || '').trim()
+                        const agreedLine = fields.unilateral && fields.unilateralOrg
+                            ? `Срезание согласовано ${fields.unilateralOrg} в одностороннем порядке.`
+                            : (sealType.agreedWith ? `Срезание согласовано с ${sealType.agreedWith}.` : null)
+
                         return [
                             `@IvanB0`,
                             `@CUIM_spec1`,
@@ -1260,9 +1305,10 @@
                             `КП активации: ${data.activationPoint}`,
                             `Место срезания: ${cuttingPlace}`,
                             ``,
-                            (fields.actions || '').trim() ? fields.actions.trim() : null,
-                            sealType.agreedWith ? `Срезание согласовано с ${sealType.agreedWith}.` : null,
-                            (fields.actions || '').trim() || sealType.agreedWith ? `` : null,
+                            actionsText ? actionsText : null,
+                            actionsText && agreedLine ? `` : null,
+                            agreedLine,
+                            actionsText || agreedLine ? `` : null,
                             ...perSealLines,
                             ``,
                             `${sealLabel} ${data.sealNumber} ${cutVerb}`,
@@ -1275,6 +1321,7 @@
                 notAgreed: {
                     id: 'notAgreed',
                     name: 'Не согласовано срезание',
+                    disabled: true, // вернуть в работу — удалить эту строку
                     fields: [
                         {
                             id: 'territory',
@@ -1376,7 +1423,8 @@
                         const seals = data.selectedSeals || [data.sealNumber]
                         const isMulti = seals.length > 1
                         const iktt = data.ikttSeals || []
-                        const isNonCrcp = s => Number(s) > 1000000 || iktt.includes(s)
+                        const gpti = data.gptiSeals || []
+                        const isNonCrcp = s => Number(s) > 1000000 || iktt.includes(s) || gpti.includes(s)
 
                         const reasons = []
                         if (fields.reasonNoConnection) reasons.push('отсутствие связи')
@@ -1468,9 +1516,11 @@
         },
 
         // Определить тип пломбы по выбранным пломбам
-        getSealType(seals, ikttSeals) {
+        getSealType(seals, ikttSeals, gptiSeals = []) {
             const allIktt = seals.length > 0 && seals.every(s => ikttSeals.includes(s))
             if (allIktt) return SEAL_TYPES.IKTT
+            const allGpti = seals.length > 0 && seals.every(s => gptiSeals.includes(s))
+            if (allGpti) return SEAL_TYPES.GPTI
             const allBts = seals.length > 0 && seals.every(s => Number(s) > 1000000)
             if (allBts) return SEAL_TYPES.BTS
             return SEAL_TYPES.CRCP
@@ -1515,11 +1565,12 @@
 
     class DataExtractor {
         extract() {
-            const { numbers: sealNumbers, ikttSeals } = this.getSealNumbers()
+            const { numbers: sealNumbers, ikttSeals, gptiSeals } = this.getSealNumbers()
             return {
                 sealNumber: sealNumbers[0],
                 sealNumbers,
                 ikttSeals,
+                gptiSeals,
                 isBts: Number(sealNumbers[0]) > 1000000,
                 transportType: this.getTransportType(),
                 transportStatus: this.getTransportStatus(),
@@ -1540,18 +1591,25 @@
             const els = document.querySelectorAll('div[data-title="Арендуемые ЭНП"] span')
             const numbers = []
             const ikttSeals = []
+            const gptiSeals = []
             els.forEach(el => {
                 const text = el.textContent
                 const match = text.match(/SN:\s*0*(\d+)/)
                 if (match) {
                     numbers.push(match[1])
                     if (/\(IKTT\)/i.test(text)) ikttSeals.push(match[1])
+                    if (/\(GPTI\)/i.test(text)) gptiSeals.push(match[1])
                 }
             })
             // Убираем дубликаты (одна пломба может встречаться несколько раз на странице)
             const uniqueNumbers = [...new Set(numbers)]
             const uniqueIktt = [...new Set(ikttSeals)]
-            return { numbers: uniqueNumbers.length ? uniqueNumbers : ['▮▮▮'], ikttSeals: uniqueIktt }
+            const uniqueGpti = [...new Set(gptiSeals)]
+            return {
+                numbers: uniqueNumbers.length ? uniqueNumbers : ['▮▮▮'],
+                ikttSeals: uniqueIktt,
+                gptiSeals: uniqueGpti,
+            }
         }
 
         getTransportType() {
@@ -1662,7 +1720,7 @@
         getRegulationType() {
             const orderNumber = this.getOrderNumber()
             if (orderNumber.startsWith('ST/')) return 'PP1877'
-            if (/^(EV\/|ET\/|EE\/|BY_|KZ)/.test(orderNumber)) return 'D7'
+            if (/^(EV\/|ET\/|EE\/|BY_|KZ|KG)/.test(orderNumber)) return 'D7'
             return 'PP1877'
         }
     }
@@ -1686,14 +1744,15 @@
             this.selectedSeals = []
             this.sealFieldValues = {}
             this.ikttSeals = []
+            this.gptiSeals = []
             this.navigationStack = [] // История навигации для кнопки "Назад"
             this.lastOrderId = null // ID перевозки при открытии формы
             this.urlWatchInterval = null
         }
 
-        // Пломба не CRCP (БТС или IKTT) — скрываем ПО и температуру
+        // Пломба не CRCP (БТС, IKTT или GPTI) — скрываем ПО и температуру
         isNonCrcp(seal) {
-            return Number(seal) > 1000000 || this.ikttSeals.includes(seal)
+            return Number(seal) > 1000000 || this.ikttSeals.includes(seal) || this.gptiSeals.includes(seal)
         }
 
         // Извлекает ID перевозки из URL: /orders/item/{ID}/...
@@ -1910,6 +1969,26 @@
 
                 .cm-list-item:last-child {
                     margin-bottom: 0;
+                }
+
+                .cm-list-item-disabled {
+                    opacity: 0.45;
+                    cursor: not-allowed;
+                    pointer-events: none;
+                    background: #fafafa;
+                }
+
+                .cm-list-badge {
+                    display: inline-block;
+                    font-size: 11px;
+                    background: #eceff1;
+                    color: #607d8b;
+                    padding: 2px 6px;
+                    border-radius: 3px;
+                    margin-left: 6px;
+                    vertical-align: middle;
+                    font-weight: 500;
+                    text-transform: lowercase;
                 }
 
                 .cm-list-icon {
@@ -2167,6 +2246,102 @@
                     width: 20px;
                     height: 20px;
                     accent-color: #1890ff;
+                }
+
+                .cm-checkbox-shimmer {
+                    background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+                    border: 2px solid #fb8c00;
+                    border-radius: 6px;
+                    padding: 12px 16px;
+                    margin-bottom: 16px;
+                    position: relative;
+                    overflow: hidden;
+                    transition: background 0.6s ease, border-color 0.6s ease;
+                }
+
+                .cm-checkbox-shimmer .cm-checkbox-group {
+                    position: relative;
+                    z-index: 1;
+                }
+
+                .cm-checkbox-shimmer .cm-checkbox-label {
+                    font-weight: 600;
+                    color: #e65100;
+                    transition: color 0.6s ease;
+                }
+
+                .cm-checkbox-shimmer .cm-checkbox {
+                    width: 20px;
+                    height: 20px;
+                    accent-color: #fb8c00;
+                    transition: accent-color 0.6s ease;
+                }
+
+                .cm-checkbox-shimmer:has(input:checked) {
+                    background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+                    border-color: #1890ff;
+                }
+
+                .cm-checkbox-shimmer:has(input:checked) .cm-checkbox-label {
+                    color: #1565c0;
+                }
+
+                .cm-checkbox-shimmer:has(input:checked) .cm-checkbox {
+                    accent-color: #1890ff;
+                }
+
+                .cm-checkbox-shimmer::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: -50%;
+                    width: 40%;
+                    height: 100%;
+                    background: linear-gradient(110deg, transparent 0%, rgba(255,255,255,0.45) 50%, transparent 100%);
+                    animation: cm-checkbox-shimmer-glide 4s ease-in-out infinite;
+                    pointer-events: none;
+                }
+
+                @keyframes cm-checkbox-shimmer-glide {
+                    0%   { left: -50%; }
+                    100% { left: 110%; }
+                }
+
+                .cm-inline-radio-group {
+                    display: flex;
+                    gap: 16px;
+                    flex-wrap: wrap;
+                    margin-top: 10px;
+                    padding-top: 10px;
+                    border-top: 1px dashed rgba(0, 0, 0, 0.12);
+                    transition: opacity 0.3s ease;
+                }
+
+                .cm-inline-radio-label {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    cursor: pointer;
+                    font-size: 14px;
+                    user-select: none;
+                }
+
+                .cm-inline-radio-label .cm-radio {
+                    cursor: pointer;
+                }
+
+                .cm-checkbox-highlight-red .cm-inline-radio-label {
+                    color: #c62828;
+                    font-weight: 500;
+                }
+
+                .cm-checkbox-highlight-red .cm-inline-radio-label .cm-radio {
+                    accent-color: #e53935;
+                }
+
+                .cm-form-group:has(> .cm-checkbox-group input[type="checkbox"]:not(:checked)) .cm-inline-radio-group {
+                    opacity: 0.4;
+                    pointer-events: none;
                 }
 
                 .cm-missing {
@@ -2507,6 +2682,7 @@
             const pageData = this.dataExtractor.extract()
             this.selectedSeals = [...pageData.sealNumbers]
             this.ikttSeals = [...pageData.ikttSeals]
+            this.gptiSeals = [...pageData.gptiSeals]
             this.currentCategory = null
             this.currentTemplate = null
 
@@ -2612,7 +2788,7 @@
         buildChatTagText(pageData) {
             const tag = Utils.getChatTag(pageData.transportProcedure)
             const seals = this.selectedSeals.length > 0 ? this.selectedSeals : pageData.sealNumbers
-            const sealType = Utils.getSealType(seals, pageData.ikttSeals)
+            const sealType = Utils.getSealType(seals, pageData.ikttSeals, pageData.gptiSeals)
             const sealLabel = sealType === SEAL_TYPES.CRCP ? 'ЭНП' : 'НП'
             const sealNumber = seals.join(', ')
             const procedure = this.container?.querySelector('input[name="cm-tag-procedure"]:checked')?.value
@@ -2679,9 +2855,9 @@
                     ${templates
                         .map(
                             (tpl) => `
-                        <li class="cm-list-item" data-template="${tpl.id}" data-search="${tpl.name.toLowerCase()}">
+                        <li class="cm-list-item ${tpl.disabled ? 'cm-list-item-disabled' : ''}" data-template="${tpl.id}" data-search="${tpl.name.toLowerCase()}" ${tpl.disabled ? 'data-disabled="1"' : ''}>
                             <div class="cm-list-content">
-                                <div class="cm-list-name">${tpl.name}</div>
+                                <div class="cm-list-name">${tpl.name}${tpl.disabled ? ' <span class="cm-list-badge">скоро</span>' : ''}</div>
                                 ${tpl.description ? `<div class="cm-list-desc">${tpl.description}</div>` : ''}
                             </div>
                             <span class="cm-list-arrow">›</span>
@@ -2709,6 +2885,7 @@
             const pageData = this.dataExtractor.extract()
             this.selectedSeals = [...pageData.sealNumbers]
             this.ikttSeals = [...pageData.ikttSeals]
+            this.gptiSeals = [...pageData.gptiSeals]
 
             // Сохраняем текущее состояние для навигации
             this.navigationStack.push({
@@ -2723,7 +2900,9 @@
 
             // Сброс значений полей
             this.currentStatus = pageData.transportStatus
-            this.currentIsNonCrcp = pageData.isBts || pageData.ikttSeals.includes(pageData.sealNumber)
+            this.currentIsNonCrcp = pageData.isBts
+                || pageData.ikttSeals.includes(pageData.sealNumber)
+                || pageData.gptiSeals.includes(pageData.sealNumber)
             this.fieldValues = {}
             template.fields.forEach((field) => {
                 // Не устанавливаем default для полей скрытых по showIfStatus
@@ -2740,6 +2919,9 @@
                     }
                 } else if (field.default !== undefined) {
                     this.fieldValues[field.id] = field.default
+                }
+                if (field.inlineRadio?.default !== undefined) {
+                    this.fieldValues[field.inlineRadio.id] = field.inlineRadio.default
                 }
             })
 
@@ -2859,7 +3041,11 @@
                     const halfWidth = field.halfWidth ? 'cm-form-group-half' : ''
 
                     const highlightClass = field.highlight
-                        ? (field.highlightColor === 'red' ? 'cm-checkbox-highlight-red' : field.highlightColor === 'orange' ? 'cm-checkbox-highlight-orange' : field.highlightColor === 'blue' ? 'cm-checkbox-highlight-blue' : 'cm-checkbox-highlight')
+                        ? (field.highlightColor === 'red' ? 'cm-checkbox-highlight-red'
+                          : field.highlightColor === 'orange' ? 'cm-checkbox-highlight-orange'
+                          : field.highlightColor === 'blue' ? 'cm-checkbox-highlight-blue'
+                          : field.highlightColor === 'shimmer' ? 'cm-checkbox-shimmer'
+                          : 'cm-checkbox-highlight')
                         : ''
 
                     switch (field.type) {
@@ -2905,7 +3091,17 @@
                                 </div>
                             `
 
-                        case 'checkbox':
+                        case 'checkbox': {
+                            const ir = field.inlineRadio
+                            const irCurrent = ir ? (this.fieldValues[ir.id] ?? ir.default) : null
+                            const inlineRadioHtml = ir
+                                ? `<div class="cm-inline-radio-group">${ir.options.map(opt => `
+                                        <label class="cm-inline-radio-label">
+                                            <input type="radio" class="cm-radio" name="field-${ir.id}" value="${opt.value}" ${opt.value === irCurrent ? 'checked' : ''}>
+                                            ${opt.label}
+                                        </label>
+                                    `).join('')}</div>`
+                                : ''
                             return `
                                 <div class="cm-form-group ${hidden} ${halfWidth} ${highlightClass}" data-field="${field.id}" data-showif="${field.showIf || ''}" data-hideif="${field.hideIf || ''}">
                                     <div class="cm-checkbox-group">
@@ -2914,8 +3110,10 @@
                                             ${this.fieldValues[field.id] ? 'checked' : ''}>
                                         <label class="cm-checkbox-label" for="field-${field.id}">${field.label}</label>
                                     </div>
+                                    ${inlineRadioHtml}
                                 </div>
                             `
+                        }
 
                         case 'radio': {
                             const defaultVal = field.defaultByStatus
@@ -3108,6 +3306,7 @@
             // Шаблоны
             this.container.querySelectorAll('[data-template]').forEach((item) => {
                 item.addEventListener('click', () => {
+                    if (item.dataset.disabled) return
                     this.showForm(item.dataset.template)
                 })
             })
@@ -3303,6 +3502,10 @@
 
                 if (field.type === 'checkbox') {
                     this.fieldValues[field.id] = el.checked
+                    if (field.inlineRadio) {
+                        const checked = this.container.querySelector(`input[name="field-${field.inlineRadio.id}"]:checked`)
+                        this.fieldValues[field.inlineRadio.id] = checked ? checked.value : ''
+                    }
                 } else {
                     this.fieldValues[field.id] = el.value
                 }
@@ -3575,6 +3778,7 @@
             this.selectedSeals = []
             this.sealFieldValues = {}
             this.ikttSeals = []
+            this.gptiSeals = []
             this.lastOrderId = null
         }
 
@@ -3684,6 +3888,7 @@
             const pageData = this.dataExtractor.extract()
             this.selectedSeals = [...pageData.sealNumbers]
             this.ikttSeals = [...pageData.ikttSeals]
+            this.gptiSeals = [...pageData.gptiSeals]
             const dataInfo = this.container.querySelector('.cm-data-info')
             if (dataInfo) {
                 dataInfo.innerHTML = `
