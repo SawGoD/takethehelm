@@ -6,6 +6,8 @@
 // @author       SawGoD
 // @match        https://sa.transit.crcp.ru/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=crcp.ru
+// @updateURL    https://raw.githubusercontent.com/SawGoD/takethehelm/main/catch_me.user.js
+// @downloadURL  https://raw.githubusercontent.com/SawGoD/takethehelm/main/catch_me.user.js
 // @grant        GM_info
 // ==/UserScript==
 
