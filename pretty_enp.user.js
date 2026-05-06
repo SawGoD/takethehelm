@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pretty ENP
 // @namespace    http://tampermonkey.net/
-// @version      2.0.9
+// @version      2.5.3
 // @description  Раздел с телеметрией ЭНП становится прекраснее
 // @author       https://t.me/SawGoD
 // @match        http://seal-admin.newprod.sopt/devices*
@@ -46,6 +46,14 @@
             if (diffMinutes <= 60) return 'rgba(144, 238, 144, 0.11)'
             if (diffMinutes <= 240) return 'rgba(255, 165, 0, 0.10)'
             return 'rgba(255, 99, 71, 0.08)'
+        },
+
+        isDeviceFromFuture(serverDateStr, deviceDateStr) {
+            const serverDate = this.parseDateTime(serverDateStr)
+            const deviceDate = this.parseDateTime(deviceDateStr)
+            if (!serverDate || !deviceDate) return false
+            const diffMinutes = (deviceDate - serverDate) / (1000 * 60)
+            return diffMinutes > 1440
         },
 
         getCommandStatusColor(statusText) {
@@ -95,6 +103,7 @@
                 return {
                     ...baseIndexes,
                     dateTime: headers.findIndex((h) => h.includes('Дата и время приема сервером')),
+                    deviceDateTime: headers.findIndex((h) => h.includes('Дата и время от ЭНП')),
                     valid: headers.findIndex((h) => h.includes('Валидность')),
                     alarm: headers.findIndex((h) => h.includes('Тревога')),
                     pinHack: headers.findIndex((h) => h.includes('Штырь взломан')),
@@ -167,7 +176,8 @@
             if (colIdx.latlon >= 0) {
                 const coordCells = table.querySelectorAll(`td:nth-child(${colIdx.latlon + 1}), th:nth-child(${colIdx.latlon + 1})`)
                 coordCells.forEach((cell) => {
-                    cell.style.paddingRight = '75px'
+                    cell.style.paddingRight = '40px'
+                    cell.style.whiteSpace = 'nowrap'
                 })
             }
 
@@ -206,9 +216,20 @@
                     const dateCell = cells[colIdx.dateTime]?.querySelector('div')
                     if (dateCell) {
                         const dateStr = dateCell.textContent.trim()
-                        const backgroundColor = Utils.getRowColorByTime(dateStr)
-                        if (backgroundColor) {
-                            row.style.backgroundColor = backgroundColor
+                        const deviceDateStr = colIdx.deviceDateTime >= 0
+                            ? cells[colIdx.deviceDateTime]?.querySelector('div')?.textContent.trim()
+                            : null
+                        const isFuture = deviceDateStr && Utils.isDeviceFromFuture(dateStr, deviceDateStr)
+
+                        if (isFuture) {
+                            row.style.backgroundColor = 'rgba(80, 80, 80, 0.25)'
+                            row.style.opacity = '0.5'
+                        } else {
+                            row.style.opacity = ''
+                            const backgroundColor = Utils.getRowColorByTime(dateStr)
+                            if (backgroundColor) {
+                                row.style.backgroundColor = backgroundColor
+                            }
                         }
                     }
                 }
@@ -221,7 +242,26 @@
                 this.processStatus(cells, colIdx)
                 this.processTemperature(cells, colIdx)
                 this.processCoordinates(cells, colIdx)
+                this.processDeviceTimeLag(cells, colIdx)
             })
+        }
+
+        processDeviceTimeLag(cells, colIdx) {
+            if (colIdx.dateTime < 0 || colIdx.deviceDateTime < 0) return
+
+            const serverDiv = cells[colIdx.dateTime]?.querySelector('div')
+            const deviceDiv = cells[colIdx.deviceDateTime]?.querySelector('div')
+            if (!serverDiv || !deviceDiv) return
+
+            const serverDate = Utils.parseDateTime(serverDiv.textContent.trim())
+            const deviceDate = Utils.parseDateTime(deviceDiv.textContent.trim())
+            if (!serverDate || !deviceDate) {
+                this.setColor(deviceDiv, '')
+                return
+            }
+
+            const lagMinutes = (serverDate - deviceDate) / (1000 * 60)
+            this.setColor(deviceDiv, lagMinutes >= 30 ? '#d9534f' : '')
         }
 
         processValidation(cells, colIdx) {
@@ -393,6 +433,83 @@
                     }
                 }
             }
+
+            this.updateCopyCoordsButton(coordCell, lonDiv, lat, lon)
+        }
+
+        updateCopyCoordsButton(coordCell, lonDiv, lat, lon) {
+            const hasValidCoords = !isNaN(lat) && lat !== 0 && !isNaN(lon) && lon !== 0
+            let copyBtn = coordCell.querySelector('.copy-coords-btn')
+
+            if (!hasValidCoords) {
+                if (copyBtn) copyBtn.remove()
+                return
+            }
+
+            if (!copyBtn) {
+                copyBtn = document.createElement('button')
+                copyBtn.className = 'copy-coords-btn'
+                copyBtn.title = 'Копировать координаты'
+                copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`
+                copyBtn.style.cssText = `
+                    display: inline-block;
+                    margin-left: 6px;
+                    padding: 2px 4px;
+                    background: transparent;
+                    border: none;
+                    cursor: pointer;
+                    opacity: 0.2;
+                    color: #0066cc;
+                    vertical-align: middle;
+                    line-height: 1;
+                    transition: opacity 0.15s;
+                `
+                copyBtn.addEventListener('mouseenter', () => copyBtn.style.opacity = '1')
+                copyBtn.addEventListener('mouseleave', () => {
+                    if (!copyBtn.dataset.copied) copyBtn.style.opacity = '0.2'
+                })
+                lonDiv.parentNode.insertBefore(copyBtn, lonDiv.nextSibling)
+            }
+
+            const coordsText = `${lat}, ${lon}`
+            copyBtn.onclick = async (e) => {
+                e.stopPropagation()
+                e.preventDefault()
+                const ok = await this.copyToClipboard(coordsText)
+                const originalHTML = copyBtn.innerHTML
+                copyBtn.innerHTML = ok ? '✓' : '✕'
+                copyBtn.style.opacity = '1'
+                copyBtn.style.color = ok ? '#28a745' : '#dc3545'
+                copyBtn.dataset.copied = '1'
+                setTimeout(() => {
+                    copyBtn.innerHTML = originalHTML
+                    copyBtn.style.color = '#0066cc'
+                    copyBtn.style.opacity = '0.2'
+                    delete copyBtn.dataset.copied
+                }, 1000)
+            }
+        }
+
+        async copyToClipboard(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                try {
+                    await navigator.clipboard.writeText(text)
+                    return true
+                } catch (e) {}
+            }
+
+            const textarea = document.createElement('textarea')
+            textarea.value = text
+            textarea.style.cssText = 'position:fixed;top:-1000px;left:-1000px;opacity:0;'
+            document.body.appendChild(textarea)
+            textarea.focus()
+            textarea.select()
+            let success = false
+            try {
+                success = document.execCommand('copy')
+            } catch (e) {}
+            document.body.removeChild(textarea)
+            return success
         }
 
         openMap(mapUrl) {
@@ -542,6 +659,7 @@
                 this.removeButton('toggle-temp-btn')
             }
 
+            this.createVersionLabel()
             this.createVisualButton()
 
             if (tableType === 'telemetry' || tableType === 'commands') {
@@ -558,6 +676,25 @@
             if (button) {
                 button.remove()
             }
+        }
+
+        createVersionLabel() {
+            if (document.getElementById('pretty-enp-version')) return
+
+            const version = document.createElement('span')
+            version.id = 'pretty-enp-version'
+            version.textContent = `v${GM_info.script.version}`
+            version.style.cssText = `
+                position: fixed;
+                top: 4px;
+                left: 22px;
+                font-size: 10px;
+                color: #999;
+                z-index: 1000;
+                pointer-events: none;
+            `
+
+            document.body.appendChild(version)
         }
 
         createVisualButton() {
@@ -734,6 +871,7 @@
             // Сбрасываем фон строк
             table.querySelectorAll('tbody tr').forEach((row) => {
                 row.style.backgroundColor = ''
+                row.style.opacity = ''
             })
 
             // Сбрасываем стили ячеек
@@ -760,6 +898,9 @@
                 span.style.cursor = ''
                 span.onclick = null
             })
+
+            // Удаляем кнопки копирования координат
+            table.querySelectorAll('.copy-coords-btn').forEach((btn) => btn.remove())
 
             // Сбрасываем padding
             table.querySelectorAll('td, th').forEach((el) => {
